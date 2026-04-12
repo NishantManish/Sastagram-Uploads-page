@@ -63,6 +63,7 @@ export default function SastagramUpload() {
           >
             <ShareScreen 
               image={editedImage} 
+              postType={postType}
               onBack={() => setFlowState('edit')} 
               onShare={() => {
                 showToast('Successfully posted to Sastagram!');

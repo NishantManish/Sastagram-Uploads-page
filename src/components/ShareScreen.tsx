@@ -4,14 +4,14 @@ import { motion } from 'motion/react';
 
 interface ShareScreenProps {
   image: string;
+  postType: 'post' | 'story' | 'reel';
   onBack: () => void;
   onShare: () => void;
   showToast: (msg: string) => void;
 }
 
-export default function ShareScreen({ image, onBack, onShare, showToast }: ShareScreenProps) {
+export default function ShareScreen({ image, postType, onBack, onShare, showToast }: ShareScreenProps) {
   const [caption, setCaption] = useState('');
-  const [shareToFacebook, setShareToFacebook] = useState(false);
   const [visibility, setVisibility] = useState<'public' | 'friends' | 'private'>('public');
 
   return (
@@ -22,13 +22,13 @@ export default function ShareScreen({ image, onBack, onShare, showToast }: Share
           <button onClick={onBack} className="p-2 hover:bg-zinc-800 rounded-full transition-colors">
             <ChevronLeft size={24} />
           </button>
-          <h1 className="text-xl font-bold tracking-tight">Publish Post</h1>
+          <h1 className="text-xl font-bold tracking-tight capitalize">{postType}</h1>
         </div>
         <button 
           onClick={onShare} 
           className="px-8 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-full font-bold shadow-lg shadow-blue-600/20 transition-all flex items-center gap-2"
         >
-          Share Now <Share2 size={18} />
+          Upload
         </button>
       </header>
 
@@ -68,30 +68,6 @@ export default function ShareScreen({ image, onBack, onShare, showToast }: Share
                 <OptionRow icon={<Users size={20} />} label="Tag People" onClick={() => showToast('Tagging...')} />
                 <OptionRow icon={<MapPin size={20} />} label="Add Location" onClick={() => showToast('Locating...')} />
                 <OptionRow icon={<Music size={20} />} label="Add Music" border={false} onClick={() => showToast('Music...')} />
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <label className="text-sm font-black tracking-widest uppercase text-zinc-500">Integrations</label>
-              <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-6 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center">
-                    <span className="text-xl font-black">f</span>
-                  </div>
-                  <div>
-                    <p className="font-bold">Facebook</p>
-                    <p className="text-xs text-zinc-500">Share to your timeline</p>
-                  </div>
-                </div>
-                <button 
-                  onClick={() => setShareToFacebook(!shareToFacebook)}
-                  className={`w-14 h-8 rounded-full relative transition-colors ${shareToFacebook ? 'bg-blue-500' : 'bg-zinc-700'}`}
-                >
-                  <motion.div 
-                    animate={{ x: shareToFacebook ? 26 : 4 }}
-                    className="w-6 h-6 bg-white rounded-full absolute top-1 shadow-lg"
-                  />
-                </button>
               </div>
             </div>
 
