@@ -1,0 +1,5 @@
+{
+  "name": "Sastagram",
+  "description": "A social media app with a pro creative studio for editing posts, stories, and reels.",
+  "requestFramePermissions": ["camera"]
+}
