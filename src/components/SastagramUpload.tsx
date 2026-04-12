@@ -1,16 +1,16 @@
 import React, { useState } from 'react';
 import MediaEditor from './MediaEditor';
 import ShareScreen from './ShareScreen';
-import MediaSelector from './MediaSelector';
+import MediaSelector, { MediaItem } from './MediaSelector';
 import { AnimatePresence, motion } from 'motion/react';
 
 export type FlowState = 'select' | 'edit' | 'share';
 
 export default function SastagramUpload() {
   const [flowState, setFlowState] = useState<FlowState>('select');
-  const [media, setMedia] = useState<string | null>(null);
+  const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
   const [postType, setPostType] = useState<'post' | 'story' | 'reel'>('post');
-  const [editedImage, setEditedImage] = useState<string | null>(null);
+  const [editedImages, setEditedImages] = useState<string[]>([]);
   const [toast, setToast] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
@@ -30,13 +30,17 @@ export default function SastagramUpload() {
             className="flex-1 flex flex-col"
           >
             <MediaSelector 
-              onSelect={(m, type) => { setMedia(m); setPostType(type); setFlowState('edit'); }} 
+              onSelect={(items, type) => { 
+                setMediaItems(items); 
+                setPostType(type); 
+                setFlowState('edit'); 
+              }} 
               onClose={() => showToast('Upload cancelled')}
               showToast={showToast}
             />
           </motion.div>
         )}
-        {flowState === 'edit' && media && (
+        {flowState === 'edit' && mediaItems.length > 0 && (
           <motion.div 
             key="edit"
             initial={{ opacity: 0, scale: 0.95 }}
@@ -45,15 +49,15 @@ export default function SastagramUpload() {
             className="flex-1 flex flex-col"
           >
             <MediaEditor 
-              media={media} 
+              mediaItems={mediaItems} 
               postType={postType}
-              onNext={(img) => { setEditedImage(img); setFlowState('share'); }} 
+              onNext={(imgs) => { setEditedImages(imgs); setFlowState('share'); }} 
               onBack={() => setFlowState('select')} 
               showToast={showToast}
             />
           </motion.div>
         )}
-        {flowState === 'share' && editedImage && (
+        {flowState === 'share' && editedImages.length > 0 && (
           <motion.div 
             key="share"
             initial={{ opacity: 0, x: 20 }}
@@ -62,14 +66,15 @@ export default function SastagramUpload() {
             className="flex-1 flex flex-col"
           >
             <ShareScreen 
-              image={editedImage} 
+              images={editedImages} 
+              mediaItems={mediaItems}
               postType={postType}
               onBack={() => setFlowState('edit')} 
               onShare={() => {
                 showToast('Successfully posted to Sastagram!');
                 setFlowState('select');
-                setMedia(null);
-                setEditedImage(null);
+                setMediaItems([]);
+                setEditedImages([]);
               }} 
               showToast={showToast}
             />

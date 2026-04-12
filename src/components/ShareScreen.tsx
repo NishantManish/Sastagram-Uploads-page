@@ -1,18 +1,21 @@
 import React, { useState } from 'react';
 import { ChevronLeft, MapPin, Users, Music, Settings, ChevronRight, Share2, Globe, Lock, Users2 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { MediaItem } from './MediaSelector';
 
 interface ShareScreenProps {
-  image: string;
+  images: string[];
+  mediaItems: MediaItem[];
   postType: 'post' | 'story' | 'reel';
   onBack: () => void;
   onShare: () => void;
   showToast: (msg: string) => void;
 }
 
-export default function ShareScreen({ image, postType, onBack, onShare, showToast }: ShareScreenProps) {
+export default function ShareScreen({ images, mediaItems, postType, onBack, onShare, showToast }: ShareScreenProps) {
   const [caption, setCaption] = useState('');
   const [visibility, setVisibility] = useState<'public' | 'friends' | 'private'>('public');
+  const [currentPreviewIndex, setCurrentPreviewIndex] = useState(0);
 
   return (
     <div className="flex-1 flex flex-col bg-zinc-950 h-screen overflow-hidden">
@@ -36,8 +39,34 @@ export default function ShareScreen({ image, postType, onBack, onShare, showToas
         <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-12">
           {/* Left Column: Preview & Caption */}
           <div className="space-y-8">
-            <div className="aspect-[4/5] bg-zinc-900 rounded-[2rem] overflow-hidden shadow-2xl ring-1 ring-white/10">
-              <img src={image} alt="Preview" className="w-full h-full object-cover" />
+            <div className="relative aspect-[4/5] bg-zinc-900 rounded-[2rem] overflow-hidden shadow-2xl ring-1 ring-white/10 group">
+              {mediaItems[currentPreviewIndex].type === 'video' ? (
+                <video src={images[currentPreviewIndex]} className="w-full h-full object-cover" autoPlay loop muted playsInline />
+              ) : (
+                <img src={images[currentPreviewIndex]} alt="Preview" className="w-full h-full object-cover" />
+              )}
+              
+              {images.length > 1 && (
+                <>
+                  <button 
+                    onClick={() => setCurrentPreviewIndex(prev => Math.max(0, prev - 1))}
+                    className="absolute left-4 top-1/2 -translate-y-1/2 p-2 bg-black/50 rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <ChevronLeft size={20} />
+                  </button>
+                  <button 
+                    onClick={() => setCurrentPreviewIndex(prev => Math.min(images.length - 1, prev + 1))}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 p-2 bg-black/50 rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <ChevronRight size={20} />
+                  </button>
+                  <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1">
+                    {images.map((_, i) => (
+                      <div key={i} className={`w-1.5 h-1.5 rounded-full ${i === currentPreviewIndex ? 'bg-white' : 'bg-white/30'}`} />
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
             
             <div className="space-y-4">

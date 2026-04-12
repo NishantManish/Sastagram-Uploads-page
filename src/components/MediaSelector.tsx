@@ -3,38 +3,66 @@ import { Image as ImageIcon, Camera, Grid, X, ChevronDown, Plus, Search } from '
 import { motion, AnimatePresence } from 'motion/react';
 
 interface MediaSelectorProps {
-  onSelect: (media: string, type: 'post' | 'story' | 'reel') => void;
+  onSelect: (items: MediaItem[], type: 'post' | 'story' | 'reel') => void;
   onClose: () => void;
   showToast: (msg: string) => void;
+}
+
+export interface MediaItem {
+  url: string;
+  type: 'image' | 'video';
 }
 
 export default function MediaSelector({ onSelect, onClose, showToast }: MediaSelectorProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
-  const [selectedMedia, setSelectedMedia] = useState<string | null>(null);
+  const [selectedItems, setSelectedItems] = useState<MediaItem[]>([]);
   const [postType, setPostType] = useState<'post' | 'story' | 'reel'>('post');
   const [currentFolder, setCurrentFolder] = useState('All Photos');
   const [isFolderDropdownOpen, setIsFolderDropdownOpen] = useState(false);
-  const [userUploads, setUserUploads] = useState<string[]>([]);
+  const [userUploads, setUserUploads] = useState<MediaItem[]>([]);
 
   const [gridCols, setGridCols] = useState(3);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
-      const newUploads = Array.from(files).map((file: File) => URL.createObjectURL(file));
+      const newUploads: MediaItem[] = Array.from(files).map((file: File) => {
+        const url = URL.createObjectURL(file);
+        const type = file.type.startsWith('video/') ? 'video' : 'image';
+        return { url, type };
+      });
       setUserUploads(prev => [...newUploads, ...prev]);
-      setSelectedMedia(newUploads[0]);
+      
+      // Auto-select the first new upload if nothing is selected
+      if (selectedItems.length === 0) {
+        setSelectedItems([newUploads[0]]);
+      }
+      
       setCurrentFolder('My Uploads');
     }
   };
 
+  const toggleSelection = (item: MediaItem) => {
+    setSelectedItems(prev => {
+      const isSelected = prev.find(i => i.url === item.url);
+      if (isSelected) {
+        return prev.filter(i => i.url !== item.url);
+      } else {
+        // Limit to 10 items for performance
+        if (prev.length >= 10) {
+          showToast('Maximum 10 items allowed');
+          return prev;
+        }
+        return [...prev, item];
+      }
+    });
+  };
+
   const handleDeleteUpload = (e: React.MouseEvent, urlToDelete: string) => {
     e.stopPropagation();
-    setUserUploads(prev => prev.filter(url => url !== urlToDelete));
-    if (selectedMedia === urlToDelete) {
-      setSelectedMedia(null);
-    }
+    setUserUploads(prev => prev.filter(item => item.url !== urlToDelete));
+    setSelectedItems(prev => prev.filter(item => item.url !== urlToDelete));
   };
 
   const toggleGrid = () => {
@@ -42,10 +70,10 @@ export default function MediaSelector({ onSelect, onClose, showToast }: MediaSel
   };
 
   const handleNext = () => {
-    if (selectedMedia) {
-      onSelect(selectedMedia, postType);
+    if (selectedItems.length > 0) {
+      onSelect(selectedItems, postType);
     } else {
-      showToast('Please select a photo or video first');
+      showToast('Please select at least one photo or video');
     }
   };
 
@@ -75,9 +103,9 @@ export default function MediaSelector({ onSelect, onClose, showToast }: MediaSel
 
         <button 
           onClick={handleNext} 
-          className={`px-6 py-2 rounded-full font-bold transition-all ${selectedMedia ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-600/20' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}`}
+          className={`px-6 py-2 rounded-full font-bold transition-all ${selectedItems.length > 0 ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-600/20' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}`}
         >
-          Next Step
+          Next Step ({selectedItems.length})
         </button>
       </header>
 
@@ -100,15 +128,30 @@ export default function MediaSelector({ onSelect, onClose, showToast }: MediaSel
         {/* Main Preview Area */}
         <div className="flex-[1.5] bg-black flex items-center justify-center p-4 md:p-8 relative group">
           <div className="w-full max-w-2xl aspect-[4/5] bg-zinc-900 rounded-3xl overflow-hidden shadow-2xl ring-1 ring-white/10 relative">
-            {selectedMedia ? (
-              <motion.img 
-                key={selectedMedia}
+            {selectedItems.length > 0 ? (
+              <motion.div
+                key={selectedItems[selectedItems.length - 1].url}
                 initial={{ opacity: 0, scale: 1.1 }}
                 animate={{ opacity: 1, scale: 1 }}
-                src={selectedMedia} 
-                alt="Preview" 
-                className="w-full h-full object-cover" 
-              />
+                className="w-full h-full"
+              >
+                {selectedItems[selectedItems.length - 1].type === 'video' ? (
+                  <video 
+                    src={selectedItems[selectedItems.length - 1].url} 
+                    className="w-full h-full object-cover" 
+                    autoPlay 
+                    loop 
+                    muted 
+                    playsInline
+                  />
+                ) : (
+                  <img 
+                    src={selectedItems[selectedItems.length - 1].url} 
+                    alt="Preview" 
+                    className="w-full h-full object-cover" 
+                  />
+                )}
+              </motion.div>
             ) : (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 text-zinc-500">
                 <div className="w-24 h-24 rounded-full bg-zinc-800 flex items-center justify-center animate-pulse">
@@ -208,33 +251,44 @@ export default function MediaSelector({ onSelect, onClose, showToast }: MediaSel
               </button>
               
               {(() => {
-                const displayImages = userUploads.map(url => ({ full: url, thumb: url }));
-
-                return displayImages.map((img, i) => {
-                  const isSelected = selectedMedia === img.full;
-                  const isUpload = userUploads.includes(img.full);
+                return userUploads.map((item, i) => {
+                  const selectionIndex = selectedItems.findIndex(i => i.url === item.url);
+                  const isSelected = selectionIndex !== -1;
                   return (
                     <motion.div 
-                      key={img.full + i} 
+                      key={item.url + i} 
                       whileHover={{ scale: 0.98 }}
                       whileTap={{ scale: 0.95 }}
-                      onClick={() => setSelectedMedia(img.full)}
+                      onClick={() => toggleSelection(item)}
                       className={`aspect-square rounded-xl overflow-hidden cursor-pointer relative ring-2 transition-all ${isSelected ? 'ring-blue-500 ring-offset-2 ring-offset-zinc-950' : 'ring-transparent opacity-70 hover:opacity-100'}`}
                     >
-                      <img src={img.thumb} className="w-full h-full object-cover" alt="Gallery" />
+                      <div className="w-full h-full relative">
+                        {item.type === 'video' ? (
+                          <video 
+                            src={item.url} 
+                            className="w-full h-full object-cover absolute inset-0" 
+                            muted 
+                            playsInline
+                          />
+                        ) : (
+                          <img 
+                            src={item.url} 
+                            className="w-full h-full object-cover absolute inset-0 bg-zinc-900" 
+                            alt="Gallery" 
+                          />
+                        )}
+                      </div>
                       {isSelected && (
-                        <div className="absolute top-2 right-2 w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center shadow-lg">
-                          <div className="w-2 h-2 bg-white rounded-full" />
+                        <div className="absolute top-2 right-2 w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center shadow-lg text-[10px] font-bold text-white border-2 border-white">
+                          {selectionIndex + 1}
                         </div>
                       )}
-                      {isUpload && (
-                        <button
-                          onClick={(e) => handleDeleteUpload(e, img.full)}
-                          className="absolute top-2 left-2 w-7 h-7 bg-black/50 hover:bg-red-500 rounded-full flex items-center justify-center text-white backdrop-blur-sm transition-colors md:opacity-0 md:group-hover:opacity-100 opacity-100"
-                        >
-                          <X size={14} />
-                        </button>
-                      )}
+                      <button
+                        onClick={(e) => handleDeleteUpload(e, item.url)}
+                        className="absolute top-2 left-2 w-7 h-7 bg-black/50 hover:bg-red-500 rounded-full flex items-center justify-center text-white backdrop-blur-sm transition-colors md:opacity-0 md:group-hover:opacity-100 opacity-100"
+                      >
+                        <X size={14} />
+                      </button>
                     </motion.div>
                   );
                 });
