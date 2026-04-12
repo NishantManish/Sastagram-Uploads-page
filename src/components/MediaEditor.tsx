@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ChevronLeft, Music, Smile, Sparkles, Trash2, ChevronRight, MoreHorizontal, RotateCcw, Maximize2, Type, Layers, Wand2, X, Undo, Redo, RotateCw, Trash, ArrowUpToLine, ArrowUp, ArrowDown, ArrowDownToLine, Search } from 'lucide-react';
+import { ChevronLeft, Music, Smile, Sparkles, Trash2, ChevronRight, MoreHorizontal, RotateCcw, Maximize2, Type, Layers, Wand2, X, Undo, Redo, RotateCw, Trash, ArrowUpToLine, ArrowUp, ArrowDown, ArrowDownToLine, Search, Sliders } from 'lucide-react';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'motion/react';
 import TextEditor, { TextStyle, getFontClass, getBgColor, getTextShadow, getWebkitTextStroke } from './TextEditor';
 
@@ -13,6 +13,11 @@ export type EditorElement = {
   scale: number;
   rotation: number;
   width?: number;
+};
+
+export type EditorState = {
+  elements: EditorElement[];
+  filter: string;
 };
 
 interface MediaEditorProps {
@@ -42,9 +47,26 @@ const STICKER_DATA = [
   { emoji: '🎮', keywords: ['game', 'controller', 'play', 'videogame'] }
 ];
 
+const FILTERS = [
+  { name: 'Normal', value: 'none' },
+  { name: 'Vintage', value: 'sepia(0.5) contrast(1.2) saturate(1.5)' },
+  { name: 'B&W', value: 'grayscale(100%)' },
+  { name: 'Sepia', value: 'sepia(100%)' },
+  { name: 'Warm', value: 'sepia(0.3) saturate(1.5) hue-rotate(-10deg)' },
+  { name: 'Cool', value: 'saturate(1.2) hue-rotate(10deg) contrast(1.1)' },
+  { name: 'Contrast', value: 'contrast(1.5)' },
+  { name: 'Blur', value: 'blur(2px)' },
+  { name: 'Fade', value: 'opacity(0.8) contrast(0.8) saturate(0.8)' },
+  { name: 'Vibrant', value: 'saturate(2) contrast(1.1)' },
+  { name: 'Noir', value: 'grayscale(100%) contrast(1.5) brightness(0.8)' },
+  { name: 'Retro', value: 'sepia(0.4) hue-rotate(-30deg) saturate(1.2) contrast(1.1)' },
+  { name: 'Dream', value: 'blur(1px) saturate(1.5) brightness(1.1)' },
+];
+
 export default function MediaEditor({ media, postType, onNext, onBack, showToast }: MediaEditorProps) {
   const [elements, setElements] = useState<EditorElement[]>([]);
-  const [history, setHistory] = useState<EditorElement[][]>([[]]);
+  const [currentFilter, setCurrentFilter] = useState<string>('none');
+  const [history, setHistory] = useState<EditorState[]>([{ elements: [], filter: 'none' }]);
   const [historyIndex, setHistoryIndex] = useState(0);
   
   const [isEditingText, setIsEditingText] = useState(false);
@@ -53,14 +75,15 @@ export default function MediaEditor({ media, postType, onNext, onBack, showToast
   const [trashActive, setTrashActive] = useState(false);
   const [showCenterGuide, setShowCenterGuide] = useState(false);
   const [isStickerDrawerOpen, setIsStickerDrawerOpen] = useState(false);
+  const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
   const [stickerSearch, setStickerSearch] = useState('');
   const [activeElementId, setActiveElementId] = useState<string | null>(null);
   
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const pushToHistory = (newElements: EditorElement[]) => {
+  const pushToHistory = (newElements: EditorElement[], newFilter: string = currentFilter) => {
     const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push(JSON.parse(JSON.stringify(newElements)));
+    newHistory.push({ elements: JSON.parse(JSON.stringify(newElements)), filter: newFilter });
     if (newHistory.length > 50) newHistory.shift();
     setHistory(newHistory);
     setHistoryIndex(newHistory.length - 1);
@@ -69,7 +92,8 @@ export default function MediaEditor({ media, postType, onNext, onBack, showToast
   const undo = () => {
     if (historyIndex > 0) {
       const prev = history[historyIndex - 1];
-      setElements(JSON.parse(JSON.stringify(prev)));
+      setElements(JSON.parse(JSON.stringify(prev.elements)));
+      setCurrentFilter(prev.filter);
       setHistoryIndex(historyIndex - 1);
       showToast('Undo');
     }
@@ -78,7 +102,8 @@ export default function MediaEditor({ media, postType, onNext, onBack, showToast
   const redo = () => {
     if (historyIndex < history.length - 1) {
       const next = history[historyIndex + 1];
-      setElements(JSON.parse(JSON.stringify(next)));
+      setElements(JSON.parse(JSON.stringify(next.elements)));
+      setCurrentFilter(next.filter);
       setHistoryIndex(historyIndex + 1);
       showToast('Redo');
     }
@@ -376,7 +401,12 @@ export default function MediaEditor({ media, postType, onNext, onBack, showToast
       {/* Main Canvas Area */}
       <main className="flex-1 bg-black relative flex items-center justify-center p-4 md:p-12 overflow-hidden">
           <div className="w-full max-w-lg aspect-[4/5] bg-zinc-900 rounded-[2rem] overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.5)] ring-1 ring-white/10 relative">
-            <img src={media} alt="Media" className="w-full h-full object-cover pointer-events-none select-none" />
+            <img 
+              src={media} 
+              alt="Media" 
+              className="w-full h-full object-cover pointer-events-none select-none transition-all duration-300" 
+              style={{ filter: currentFilter }}
+            />
             
             {/* Elements Layer */}
             <div className="absolute inset-0 overflow-hidden">
@@ -513,9 +543,10 @@ export default function MediaEditor({ media, postType, onNext, onBack, showToast
 
         {/* Bottom Tools & Actions */}
         <div className="flex flex-col bg-zinc-950 z-40 border-t border-zinc-800/50">
-          <aside className="w-full flex flex-row items-center justify-center p-4 gap-4 md:gap-8 overflow-x-auto no-scrollbar">
+          <aside className="w-full flex flex-row items-center justify-start md:justify-center px-6 py-4 gap-4 md:gap-8 overflow-x-auto no-scrollbar">
             <ToolButton icon={<Type size={24} />} label="Text" onClick={handleAddText} />
             <ToolButton icon={<Smile size={24} />} label="Stickers" onClick={() => setIsStickerDrawerOpen(true)} />
+            <ToolButton icon={<Sliders size={24} />} label="Filters" onClick={() => setIsFilterDrawerOpen(true)} />
             <ToolButton icon={<Music size={24} />} label="Music" onClick={() => showToast('Music library...')} />
             <ToolButton icon={<Sparkles size={24} />} label="Effects" onClick={() => showToast('Effects...')} />
             <ToolButton icon={<MoreHorizontal size={24} />} label="More" onClick={() => showToast('More tools...')} />
@@ -595,6 +626,51 @@ export default function MediaEditor({ media, postType, onNext, onBack, showToast
                 >
                   {s.emoji}
                 </motion.button>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Filter Drawer */}
+      <AnimatePresence>
+        {isFilterDrawerOpen && (
+          <motion.div 
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
+            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+            className="absolute inset-x-0 bottom-0 h-1/2 bg-zinc-900 rounded-t-[3rem] z-[100] flex flex-col shadow-[0_-20px_80px_rgba(0,0,0,0.8)] border-t border-white/10"
+          >
+            <div className="w-full flex justify-center p-4">
+              <div className="w-16 h-1.5 bg-zinc-700 rounded-full" />
+            </div>
+            <div className="px-8 py-4 flex justify-between items-center">
+              <h3 className="text-2xl font-black tracking-tight">Filters</h3>
+              <button onClick={() => setIsFilterDrawerOpen(false)} className="p-2 bg-zinc-800 rounded-full"><X size={20} /></button>
+            </div>
+            <div className="flex-1 overflow-x-auto p-8 flex gap-6 items-center no-scrollbar">
+              {FILTERS.map(filter => (
+                <button
+                  key={filter.name}
+                  onClick={() => {
+                    setCurrentFilter(filter.value);
+                    pushToHistory(elements, filter.value);
+                  }}
+                  className="flex flex-col items-center gap-3 min-w-[100px] group"
+                >
+                  <div className={`w-20 h-20 rounded-2xl overflow-hidden ring-2 transition-all ${currentFilter === filter.value ? 'ring-blue-500 ring-offset-4 ring-offset-zinc-900 scale-110' : 'ring-transparent hover:ring-zinc-500'}`}>
+                    <img 
+                      src={media} 
+                      alt={filter.name} 
+                      className="w-full h-full object-cover"
+                      style={{ filter: filter.value }}
+                    />
+                  </div>
+                  <span className={`text-xs font-bold tracking-widest uppercase ${currentFilter === filter.value ? 'text-blue-400' : 'text-zinc-400 group-hover:text-white'}`}>
+                    {filter.name}
+                  </span>
+                </button>
               ))}
             </div>
           </motion.div>
