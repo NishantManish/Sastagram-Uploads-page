@@ -208,18 +208,7 @@ export default function MediaSelector({ onSelect, onClose, showToast }: MediaSel
               </button>
               
               {(() => {
-                let displayImages: { full: string, thumb: string }[] = [];
-                const uploads = userUploads.map(url => ({ full: url, thumb: url }));
-                
-                if (currentFolder === 'My Uploads') {
-                  displayImages = uploads;
-                } else {
-                  const mocks = [...Array(24)].map((_, i) => ({
-                    full: `https://picsum.photos/seed/${i + 200}/600/800`,
-                    thumb: `https://picsum.photos/seed/${i + 200}/300/300`
-                  }));
-                  displayImages = currentFolder === 'All Photos' ? [...uploads, ...mocks] : mocks;
-                }
+                const displayImages = userUploads.map(url => ({ full: url, thumb: url }));
 
                 return displayImages.map((img, i) => {
                   const isSelected = selectedMedia === img.full;

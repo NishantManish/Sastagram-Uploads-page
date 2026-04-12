@@ -527,9 +527,6 @@ export default function MediaEditor({ media, postType, onNext, onBack, showToast
               <>
                 <button onClick={() => { showToast('Posted to Story!'); onBack(); }} className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 rounded-full text-sm font-bold transition-colors">Your Story</button>
                 <button onClick={() => { showToast('Posted to Close Friends!'); onBack(); }} className="px-6 py-3 bg-green-600 hover:bg-green-500 rounded-full text-sm font-bold transition-colors">Close Friends</button>
-                <button onClick={() => onNext(media)} className="w-12 h-12 bg-white text-black hover:bg-zinc-200 rounded-full flex items-center justify-center transition-colors shadow-lg">
-                  <ChevronRight size={24} />
-                </button>
               </>
             )}
             {postType === 'post' && (
