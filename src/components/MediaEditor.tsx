@@ -220,11 +220,16 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
 
   const handleDrawingStart = (e: React.PointerEvent) => {
     if (!isDrawing) return;
-    const rect = drawingCanvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
     
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    
+    const svg = e.currentTarget as SVGSVGElement;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse());
+    const x = svgP.x;
+    const y = svgP.y;
     
     const newPath: DrawingPath = {
       id: Date.now().toString(),
@@ -236,25 +241,23 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
     setCurrentPath(newPath);
   };
 
-  const drawingFrameRef = useRef<number | null>(null);
   const handleDrawingMove = (e: React.PointerEvent) => {
     if (!isDrawing || !currentPath) return;
-    const rect = drawingCanvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
     
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    const svg = e.currentTarget as SVGSVGElement;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse());
+    const x = svgP.x;
+    const y = svgP.y;
     
-    if (drawingFrameRef.current) cancelAnimationFrame(drawingFrameRef.current);
-    
-    drawingFrameRef.current = requestAnimationFrame(() => {
-      setCurrentPath(prev => {
-        if (!prev) return null;
-        return {
-          ...prev,
-          points: [...prev.points, { x, y }]
-        };
-      });
+    setCurrentPath(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        points: [...prev.points, { x, y }]
+      };
     });
   };
 
@@ -589,11 +592,12 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
             -cropW / 2, -cropH / 2, cropW, cropH
           );
 
-          // Draw drawings
+          // Draw drawings - Now before restore so they get the same rotation/flip as the image
           state.drawings.forEach(path => {
             ctx.beginPath();
             ctx.strokeStyle = path.color;
-            ctx.lineWidth = (path.size / 100) * Math.max(cropW, cropH);
+            // path.size is in units of 100 viewBox. Scale to image width.
+            ctx.lineWidth = (path.size / 100) * img.width;
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
             
@@ -608,8 +612,14 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
             }
             
             path.points.forEach((p, idx) => {
-              const px = (p.x / 100) * cropW - cropW / 2;
-              const py = (p.y / 100) * cropH - cropH / 2;
+              // p.x, p.y are 0-100 relative to full image
+              const ix = (p.x / 100) * img.width;
+              const iy = (p.y / 100) * img.height;
+              
+              // Map to canvas coordinates (relative to center of crop)
+              const px = -cropW / 2 + (ix - cropX);
+              const py = -cropH / 2 + (iy - cropY);
+              
               if (idx === 0) ctx.moveTo(px, py);
               else ctx.lineTo(px, py);
             });
@@ -618,18 +628,24 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
             ctx.shadowBlur = 0;
           });
 
-          // Draw Elements (Stickers and Text)
-          const previewRect = drawingCanvasRef.current?.getBoundingClientRect();
-          const previewWidth = previewRect?.width || 1;
-          const scaleFactor = canvas.width / previewWidth;
+          // Draw Elements (Stickers and Text) - BEFORE restore so they rotate with image
+          const previewWidth = drawingCanvasRef.current?.clientWidth || 1;
+          const fullCanvasWidth = cropW / (state.crop.width / 100);
+          const scaleFactor = fullCanvasWidth / previewWidth;
 
           state.elements.forEach(el => {
             ctx.save();
-            // Translate to center of canvas first, then apply element offset
-            ctx.translate(canvas.width / 2, canvas.height / 2);
-            ctx.translate(el.x * scaleFactor, el.y * scaleFactor);
+            
+            // Offset of crop center from image center
+            const offsetX = (cropX + cropW / 2) - img.width / 2;
+            const offsetY = (cropY + cropH / 2) - img.height / 2;
+            
+            const cx = el.x * scaleFactor - offsetX;
+            const cy = el.y * scaleFactor - offsetY;
+            
+            ctx.translate(cx, cy);
             ctx.rotate((el.rotation * Math.PI) / 180);
-            ctx.scale(el.scale, el.scale);
+            ctx.scale(el.scale * scaleFactor, el.scale * scaleFactor);
 
             if (el.type === 'sticker') {
               ctx.font = '80px Arial';
@@ -638,36 +654,28 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
               ctx.fillText(el.content, 0, 0);
             } else if (el.type === 'text' && el.style) {
               const fontSize = el.style.fontSize;
-              ctx.font = `bold ${fontSize}px Arial`; // Simplified font mapping
+              ctx.font = `bold ${fontSize}px Arial`;
               ctx.textAlign = el.style.alignment;
               ctx.textBaseline = 'middle';
               
               const lines = el.content.split('\n');
               const lineHeight = fontSize * 1.2;
+              const maxWidth = el.width ? el.width : Math.max(...lines.map(l => ctx.measureText(l).width)) + 20;
+              const totalHeight = lines.length * lineHeight + 10;
               
-              // Draw background if any
               if (el.style.background !== 'none') {
                 ctx.fillStyle = getBgColor(el.style);
-                const maxWidth = el.width ? el.width : Math.max(...lines.map(l => ctx.measureText(l).width)) + 20;
-                const totalHeight = lines.length * lineHeight + 10;
                 ctx.fillRect(-maxWidth / 2, -totalHeight / 2, maxWidth, totalHeight);
               }
 
               ctx.fillStyle = el.style.color;
-              
-              // Handle effects
-              if (el.style.effect === 'shadow') {
-                ctx.shadowColor = 'rgba(0,0,0,0.8)';
-                ctx.shadowBlur = 10;
-                ctx.shadowOffsetY = 4;
-              } else if (el.style.effect === 'glow') {
-                ctx.shadowColor = el.style.color;
-                ctx.shadowBlur = 15;
-              }
-
               lines.forEach((line, index) => {
                 const yOffset = (index - (lines.length - 1) / 2) * lineHeight;
-                ctx.fillText(line, 0, yOffset);
+                let xOffset = 0;
+                if (el.style!.alignment === 'left') xOffset = -maxWidth / 2 + 10;
+                else if (el.style!.alignment === 'right') xOffset = maxWidth / 2 - 10;
+                
+                ctx.fillText(line, xOffset, yOffset);
               });
             }
             ctx.restore();
@@ -754,16 +762,27 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
 
       {/* Main Canvas Area */}
       <main className="flex-1 bg-black relative flex flex-col items-center justify-center p-4 md:p-12 overflow-hidden">
+        <div className="relative w-full h-full flex items-center justify-center">
           <div 
-            className="w-full max-w-lg bg-zinc-900 rounded-[2rem] overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.5)] ring-1 ring-white/10 relative"
-            style={{ aspectRatio: mediaAspectRatios[currentIndex] } as any}
+            className="relative bg-zinc-900 rounded-[2rem] overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.5)] ring-1 ring-white/10"
+            style={{ 
+              aspectRatio: mediaAspectRatios[currentIndex],
+              maxWidth: '100%',
+              maxHeight: '100%'
+            }}
           >
+            {/* Invisible image to force size and aspect ratio */}
+            {currentMedia.type === 'video' ? (
+              <video src={currentMedia.url} className="max-w-full max-h-full opacity-0 pointer-events-none" style={{ maxHeight: 'calc(100vh - 200px)' }} />
+            ) : (
+              <img src={currentMedia.url} className="max-w-full max-h-full opacity-0 pointer-events-none" style={{ maxHeight: 'calc(100vh - 200px)' }} />
+            )}
+            
             <div 
-              className="w-full h-full transition-all duration-300"
+              className="absolute inset-0 w-full h-full transition-all duration-300"
               style={{
                 transform: `rotate(${baseRotation}deg) scaleX(${baseFlipH ? -1 : 1})`,
                 clipPath: crop.aspectRatio === 'original' ? 'none' : `inset(${crop.y}% ${100 - (crop.x + crop.width)}% ${100 - (crop.y + crop.height)}% ${crop.x}%)`,
-                aspectRatio: mediaAspectRatios[currentIndex]
               }}
             >
               {currentMedia.type === 'video' ? (
@@ -802,73 +821,76 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
                   style={{ filter: currentFilter }}
                 />
               )}
-            </div>
 
-            {/* Drawing Layer */}
-            <svg 
-              ref={drawingCanvasRef}
-              viewBox="0 0 100 100"
-              preserveAspectRatio="none"
-              className={`absolute inset-0 z-20 pointer-events-auto ${isDrawing ? 'cursor-crosshair' : 'pointer-events-none'}`}
-              onPointerDown={handleDrawingStart}
-              onPointerMove={handleDrawingMove}
-              onPointerUp={handleDrawingEnd}
-              onPointerLeave={handleDrawingEnd}
-            >
-              {drawings.map(path => (
-                <polyline
-                  key={path.id}
-                  points={path.points.map(p => `${p.x},${p.y}`).join(' ')}
-                  fill="none"
-                  stroke={path.color}
-                  strokeWidth={path.size}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ filter: path.type === 'neon' ? 'drop-shadow(0 0 5px currentColor)' : path.type === 'blur' ? 'blur(2px)' : 'none' }}
-                />
-              ))}
-              {currentPath && (
-                <polyline
-                  points={currentPath.points.map(p => `${p.x},${p.y}`).join(' ')}
-                  fill="none"
-                  stroke={currentPath.color}
-                  strokeWidth={currentPath.size}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ filter: currentPath.type === 'neon' ? 'drop-shadow(0 0 5px currentColor)' : currentPath.type === 'blur' ? 'blur(2px)' : 'none' }}
-                />
-              )}
-            </svg>
-            
-            {/* Elements Layer */}
-            <div className="absolute inset-0 overflow-hidden">
-              {elements.map(el => (
-                <EditorElementItem
-                  key={el.id}
-                  el={el}
-                  isActive={activeElementId === el.id}
-                  isDragging={isDragging}
-                  onDragStart={() => handleDragStart(el.id)}
-                  onDrag={handleDrag}
-                  onDragEnd={(e, info) => handleDragEnd(el.id, e, info)}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setActiveElementId(el.id);
-                  }}
-                  onDoubleClick={() => {
-                    if (el.type === 'text') {
-                      setEditingElementId(el.id);
-                      setIsEditingText(true);
-                    }
-                  }}
-                  onUpdate={updateElement}
-                  onDelete={handleDelete}
-                  onRotate={handleRotate}
-                  onScale={handleScale}
-                  onWidth={handleWidth}
-                  containerRef={containerRef}
-                />
-              ))}
+              {/* Drawing Layer - Now inside transformed div to stay aligned with image pixels */}
+              <svg 
+                ref={drawingCanvasRef}
+                viewBox="0 0 100 100"
+                preserveAspectRatio="none"
+                className={`absolute inset-0 z-20 pointer-events-auto ${isDrawing ? 'cursor-crosshair' : 'pointer-events-none'}`}
+                style={{ touchAction: 'none' }}
+                onPointerDown={handleDrawingStart}
+                onPointerMove={handleDrawingMove}
+                onPointerUp={handleDrawingEnd}
+                onPointerLeave={handleDrawingEnd}
+              >
+                {drawings.map(path => (
+                  <polyline
+                    key={path.id}
+                    points={path.points.map(p => `${p.x},${p.y}`).join(' ')}
+                    fill="none"
+                    stroke={path.color}
+                    strokeWidth={path.size}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="pointer-events-none"
+                    style={{ filter: path.type === 'neon' ? 'drop-shadow(0 0 5px currentColor)' : path.type === 'blur' ? 'blur(2px)' : 'none' }}
+                  />
+                ))}
+                {currentPath && (
+                  <polyline
+                    points={currentPath.points.map(p => `${p.x},${p.y}`).join(' ')}
+                    fill="none"
+                    stroke={currentPath.color}
+                    strokeWidth={currentPath.size}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="pointer-events-none"
+                    style={{ filter: currentPath.type === 'neon' ? 'drop-shadow(0 0 5px currentColor)' : currentPath.type === 'blur' ? 'blur(2px)' : 'none' }}
+                  />
+                )}
+              </svg>
+
+              {/* Elements Layer - Now inside transformed div to stay aligned and clipped */}
+              <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                {elements.map(el => (
+                  <EditorElementItem
+                    key={el.id}
+                    el={el}
+                    isActive={activeElementId === el.id}
+                    isDragging={isDragging}
+                    onDragStart={() => handleDragStart(el.id)}
+                    onDrag={handleDrag}
+                    onDragEnd={(e, info) => handleDragEnd(el.id, e, info)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveElementId(el.id);
+                    }}
+                    onDoubleClick={() => {
+                      if (el.type === 'text') {
+                        setEditingElementId(el.id);
+                        setIsEditingText(true);
+                      }
+                    }}
+                    onUpdate={updateElement}
+                    onDelete={handleDelete}
+                    onRotate={handleRotate}
+                    onScale={handleScale}
+                    onWidth={handleWidth}
+                    containerRef={containerRef}
+                  />
+                ))}
+              </div>
             </div>
 
             {/* Guides */}
@@ -883,8 +905,9 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
               )}
             </AnimatePresence>
           </div>
+        </div>
 
-          {/* Thumbnail Bar */}
+        {/* Thumbnail Bar */}
           {mediaItems.length > 1 && (
             <div className="mt-8 flex gap-3 p-2 bg-zinc-900/50 backdrop-blur-xl rounded-2xl border border-white/5 overflow-x-auto no-scrollbar max-w-full">
               {mediaItems.map((item, idx) => (
@@ -926,9 +949,9 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
               </motion.div>
             )}
           </AnimatePresence>
-        </main>
+      </main>
 
-        {/* Bottom Tools & Actions */}
+      {/* Bottom Tools & Actions */}
         <div className="flex flex-col bg-zinc-950 z-40 border-t border-zinc-800/50">
           {isDrawing && (
             <div className="px-6 py-4 flex items-center gap-6 border-b border-zinc-800/50 bg-zinc-900/50 overflow-x-auto no-scrollbar">
@@ -1196,12 +1219,11 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
                 <div key={idx} className="space-y-4">
                   <div 
                     className="bg-zinc-900 rounded-3xl overflow-hidden shadow-2xl ring-1 ring-white/10"
-                    style={{ aspectRatio: mediaAspectRatios[idx] }}
                   >
                     {mediaItems[idx].type === 'video' ? (
-                      <video src={img} className="w-full h-full object-cover" autoPlay loop muted playsInline />
+                      <video src={img} className="w-full h-auto block" autoPlay loop muted playsInline />
                     ) : (
-                      <img src={img} className="w-full h-full object-cover" alt={`Review ${idx}`} />
+                      <img src={img} className="w-full h-auto block" alt={`Review ${idx}`} />
                     )}
                   </div>
                   <div className="flex justify-between items-center px-2">
@@ -1292,10 +1314,11 @@ function EditorElementItem({
         opacity: 1,
         zIndex: isActive ? 50 : 10
       }}
-      className={`absolute cursor-grab active:cursor-grabbing group element-container ${isActive ? 'ring-2 ring-blue-500 ring-offset-4 ring-offset-transparent rounded-lg' : ''}`}
-      style={{ touchAction: 'none', left: '50%', top: '50%', x: '-50%', y: '-50%' }}
+      className={`absolute left-1/2 top-1/2 cursor-grab active:cursor-grabbing group element-container ${isActive ? 'ring-2 ring-blue-500 ring-offset-4 ring-offset-transparent rounded-lg' : ''}`}
+      style={{ touchAction: 'none' }}
     >
-      {el.type === 'text' && el.style ? (
+      <div className="absolute -translate-x-1/2 -translate-y-1/2 flex items-center justify-center">
+        {el.type === 'text' && el.style ? (
         <div 
           className={`whitespace-pre-wrap select-none ${getFontClass(el.style.font)}`}
           style={{
@@ -1352,6 +1375,7 @@ function EditorElementItem({
           )}
         </>
       )}
+      </div>
     </motion.div>
   );
 }
@@ -1381,13 +1405,13 @@ interface CropOverlayProps {
 
 function CropOverlay({ media, mediaType, initialCrop, mediaAspectRatio, onApply, onCancel }: CropOverlayProps) {
   const [crop, setCrop] = useState(initialCrop);
+  const containerRef = useRef<HTMLDivElement>(null);
   const ratios = [
     { label: 'Original', value: 'original' },
     { label: '1:1', value: '1:1', ratio: 1 },
     { label: '3:4', value: '3:4', ratio: 3/4 },
-    { label: '4:2', value: '4:2', ratio: 4/2 },
-    { label: '2:3', value: '2:3', ratio: 2/3 },
-    { label: '3:2', value: '3:2', ratio: 3/2 },
+    { label: '4:5', value: '4:5', ratio: 4/5 },
+    { label: '16:9', value: '16:9', ratio: 16/9 },
     { label: '9:16', value: '9:16', ratio: 9/16 },
   ];
 
@@ -1395,12 +1419,16 @@ function CropOverlay({ media, mediaType, initialCrop, mediaAspectRatio, onApply,
     if (r.value === 'original') {
       setCrop({ x: 0, y: 0, width: 100, height: 100, aspectRatio: 'original' });
     } else {
-      // Center a crop area with the given ratio
+      const ratioOfPcts = r.ratio / mediaAspectRatio;
       let w = 80;
-      let h = 80 / r.ratio;
-      if (h > 80) {
-        h = 80;
-        w = 80 * r.ratio;
+      let h = 80 / ratioOfPcts;
+      if (h > 90) {
+        h = 90;
+        w = 90 * ratioOfPcts;
+      }
+      if (w > 90) {
+        w = 90;
+        h = 90 / ratioOfPcts;
       }
       setCrop({
         x: (100 - w) / 2,
@@ -1412,6 +1440,68 @@ function CropOverlay({ media, mediaType, initialCrop, mediaAspectRatio, onApply,
     }
   };
 
+  const bind = useGesture(
+    {
+      onDrag: ({ delta: [dx, dy] }) => {
+        if (!containerRef.current) return;
+        const rect = containerRef.current.getBoundingClientRect();
+        const dxPct = (dx / rect.width) * 100;
+        const dyPct = (dy / rect.height) * 100;
+
+        setCrop(prev => ({
+          ...prev,
+          x: Math.max(0, Math.min(100 - prev.width, prev.x + dxPct)),
+          y: Math.max(0, Math.min(100 - prev.height, prev.y + dyPct))
+        }));
+      },
+    },
+    { drag: { filterTaps: true } }
+  );
+
+  const handleResize = (corner: string, dx: number, dy: number) => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const dxPct = (dx / rect.width) * 100;
+    const dyPct = (dy / rect.height) * 100;
+
+    setCrop(prev => {
+      let next = { ...prev };
+      const currentRatio = (prev.width * mediaAspectRatio) / prev.height;
+      const targetRatio = ratios.find(r => r.value === prev.aspectRatio)?.ratio || currentRatio;
+
+      if (prev.aspectRatio === 'original') {
+        if (corner.includes('right')) next.width = Math.max(10, Math.min(100 - prev.x, prev.width + dxPct));
+        if (corner.includes('left')) {
+          const newX = Math.max(0, Math.min(prev.x + prev.width - 10, prev.x + dxPct));
+          next.width = prev.width + (prev.x - newX);
+          next.x = newX;
+        }
+        if (corner.includes('bottom')) next.height = Math.max(10, Math.min(100 - prev.y, prev.height + dyPct));
+        if (corner.includes('top')) {
+          const newY = Math.max(0, Math.min(prev.y + prev.height - 10, prev.y + dyPct));
+          next.height = prev.height + (prev.y - newY);
+          next.y = newY;
+        }
+      } else {
+        let change = Math.abs(dxPct) > Math.abs(dyPct) ? dxPct : dyPct;
+        if (corner === 'top-left' || corner === 'top-right') change = -dyPct;
+        
+        const newW = Math.max(10, Math.min(100, prev.width + change));
+        const newH = newW / (targetRatio / mediaAspectRatio);
+        
+        if (newH <= 100 && newW <= 100) {
+          next.width = newW;
+          next.height = newH;
+          if (corner.includes('left')) next.x = Math.max(0, prev.x - (newW - prev.width));
+          if (corner.includes('top')) next.y = Math.max(0, prev.y - (newH - prev.height));
+          if (next.x + next.width > 100) next.x = 100 - next.width;
+          if (next.y + next.height > 100) next.y = 100 - next.height;
+        }
+      }
+      return next;
+    });
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0 }}
@@ -1419,96 +1509,171 @@ function CropOverlay({ media, mediaType, initialCrop, mediaAspectRatio, onApply,
       exit={{ opacity: 0 }}
       className="fixed inset-0 bg-black/95 z-[200] flex flex-col"
     >
-      <header className="p-6 flex justify-between items-center">
-        <button onClick={onCancel} className="text-white font-bold">Cancel</button>
-        <h3 className="text-lg font-bold">Crop & Resize</h3>
-        <button onClick={() => onApply(crop)} className="px-6 py-2 bg-blue-600 text-white rounded-full font-bold">Apply</button>
+      <header className="p-6 flex justify-between items-center border-b border-zinc-800/50">
+        <button onClick={onCancel} className="text-zinc-400 font-bold">Cancel</button>
+        <div className="flex flex-col items-center">
+          <h3 className="text-lg font-bold">Crop & Resize</h3>
+          <button 
+            onClick={() => setCrop({ x: 0, y: 0, width: 100, height: 100, aspectRatio: 'original' })} 
+            className="text-[10px] text-blue-500 font-bold uppercase tracking-widest"
+          >
+            Reset
+          </button>
+        </div>
+        <button onClick={() => onApply(crop)} className="px-6 py-2 bg-blue-600 text-white rounded-full font-bold shadow-lg shadow-blue-600/20">Apply</button>
       </header>
 
-      <div className="flex-1 relative flex items-center justify-center p-8">
+      <div className="flex-1 relative flex items-center justify-center p-4 sm:p-8">
         <div 
-          className="w-full max-w-lg relative bg-zinc-900 rounded-2xl overflow-hidden"
+          ref={containerRef}
+          className="w-full max-w-lg relative bg-zinc-900 rounded-2xl overflow-hidden shadow-2xl"
           style={{ aspectRatio: mediaAspectRatio }}
         >
           {mediaType === 'video' ? (
-            <video src={media} className="w-full h-full object-cover opacity-30" muted playsInline />
+            <video src={media} className="w-full h-full object-cover opacity-40" muted playsInline />
           ) : (
-            <img src={media} className="w-full h-full object-cover opacity-30" alt="Crop Background" />
+            <img src={media} className="w-full h-full object-cover opacity-40" alt="Crop Background" />
           )}
           
           {/* Crop Area */}
-          <motion.div 
-            drag
-            dragMomentum={false}
-            dragConstraints={{ left: 0, top: 0, right: 0, bottom: 0 }} // This is tricky with percentages
-            onDrag={(e, info) => {
-              // Simple drag for now, ideally we'd constrain it
-              const dx = (info.delta.x / 400) * 100; // Rough estimate
-              const dy = (info.delta.y / 500) * 100;
-              setCrop(prev => ({
-                ...prev,
-                x: Math.max(0, Math.min(100 - prev.width, prev.x + dx)),
-                y: Math.max(0, Math.min(100 - prev.height, prev.y + dy))
-              }));
-            }}
+          <div 
+            {...(bind() as any)}
             style={{
               position: 'absolute',
               left: `${crop.x}%`,
               top: `${crop.y}%`,
               width: `${crop.width}%`,
               height: `${crop.height}%`,
+              touchAction: 'none'
             }}
-            className="border-2 border-blue-500 shadow-[0_0_0_9999px_rgba(0,0,0,0.7)] z-10"
+            className="border-2 border-blue-500 shadow-[0_0_0_9999px_rgba(0,0,0,0.75)] z-10 cursor-move"
           >
-            <div className="absolute inset-0 grid grid-cols-3 grid-rows-3">
-              {[...Array(9)].map((_, i) => <div key={i} className="border border-white/20" />)}
+            <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none">
+              {[...Array(9)].map((_, i) => <div key={i} className="border border-white/30" />)}
             </div>
-            
-            {/* Handles */}
-            <div className="absolute -top-1 -left-1 w-4 h-4 bg-white rounded-sm" />
-            <div className="absolute -top-1 -right-1 w-4 h-4 bg-white rounded-sm" />
-            <div className="absolute -bottom-1 -left-1 w-4 h-4 bg-white rounded-sm" />
-            <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-white rounded-sm" />
-          </motion.div>
 
-          <div className="absolute inset-0 pointer-events-none">
-            {mediaType === 'video' ? (
-              <video 
-                src={media} 
-                className="w-full h-full object-cover" 
-                muted 
-                playsInline
-                style={{ 
-                  clipPath: `inset(${crop.y}% ${100 - (crop.x + crop.width)}% ${100 - (crop.y + crop.height)}% ${crop.x}%)` 
-                }} 
+            {/* Corner Handles */}
+            {['top-left', 'top-right', 'bottom-left', 'bottom-right'].map(corner => (
+              <div 
+                key={corner}
+                className={`absolute w-8 h-8 z-20 ${
+                  corner === 'top-left' ? '-top-2 -left-2 border-t-4 border-l-4' :
+                  corner === 'top-right' ? '-top-2 -right-2 border-t-4 border-r-4' :
+                  corner === 'bottom-left' ? '-bottom-2 -left-2 border-b-4 border-l-4' :
+                  '-bottom-2 -right-2 border-b-4 border-r-4'
+                } border-blue-500 cursor-nwse-resize`}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  const startX = e.clientX;
+                  const startY = e.clientY;
+                  const onMove = (moveEvent: PointerEvent) => {
+                    handleResize(corner, moveEvent.clientX - startX, moveEvent.clientY - startY);
+                  };
+                  const onUp = () => {
+                    window.removeEventListener('pointermove', onMove);
+                    window.removeEventListener('pointerup', onUp);
+                  };
+                  window.addEventListener('pointermove', onMove);
+                  window.addEventListener('pointerup', onUp);
+                }}
               />
-            ) : (
-              <img 
-                src={media} 
-                className="w-full h-full object-cover" 
-                style={{ 
-                  clipPath: `inset(${crop.y}% ${100 - (crop.x + crop.width)}% ${100 - (crop.y + crop.height)}% ${crop.x}%)` 
-                }} 
-                alt="Crop Preview" 
+            ))}
+
+            {/* Edge Handles */}
+            {['top', 'bottom', 'left', 'right'].map(edge => (
+              <div 
+                key={edge}
+                className={`absolute z-20 ${
+                  edge === 'top' ? 'top-0 left-1/2 -translate-x-1/2 w-12 h-2 cursor-ns-resize' :
+                  edge === 'bottom' ? 'bottom-0 left-1/2 -translate-x-1/2 w-12 h-2 cursor-ns-resize' :
+                  edge === 'left' ? 'left-0 top-1/2 -translate-y-1/2 w-2 h-12 cursor-ew-resize' :
+                  'right-0 top-1/2 -translate-y-1/2 w-2 h-12 cursor-ew-resize'
+                } bg-blue-500/50 rounded-full`}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  const startX = e.clientX;
+                  const startY = e.clientY;
+                  const onMove = (moveEvent: PointerEvent) => {
+                    handleResize(edge, moveEvent.clientX - startX, moveEvent.clientY - startY);
+                  };
+                  const onUp = () => {
+                    window.removeEventListener('pointermove', onMove);
+                    window.removeEventListener('pointerup', onUp);
+                  };
+                  window.addEventListener('pointermove', onMove);
+                  window.addEventListener('pointerup', onUp);
+                }}
               />
-            )}
+            ))}
+          </div>
+
+          <div 
+            className="absolute pointer-events-none overflow-hidden"
+            style={{
+              left: `${crop.x}%`,
+              top: `${crop.y}%`,
+              width: `${crop.width}%`,
+              height: `${crop.height}%`,
+            }}
+          >
+            <div 
+              className="absolute"
+              style={{
+                left: `${-crop.x * (100 / crop.width)}%`,
+                top: `${-crop.y * (100 / crop.height)}%`,
+                width: `${100 * (100 / crop.width)}%`,
+                height: `${100 * (100 / crop.height)}%`,
+              }}
+            >
+              {mediaType === 'video' ? (
+                <video src={media} className="w-full h-full object-cover" muted playsInline autoPlay loop />
+              ) : (
+                <img src={media} className="w-full h-full object-cover" alt="Crop Preview" />
+              )}
+            </div>
           </div>
         </div>
       </div>
 
-      <footer className="p-8 bg-zinc-950 border-t border-zinc-800">
-        <div className="flex gap-4 overflow-x-auto no-scrollbar pb-4">
+      <div className="p-6 bg-zinc-900/50 border-t border-zinc-800/50">
+        <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
           {ratios.map(r => (
             <button
-              key={r.label}
+              key={r.value}
               onClick={() => handleRatioSelect(r)}
-              className={`px-6 py-2 rounded-full border transition-all whitespace-nowrap font-bold text-sm ${crop.aspectRatio === r.value ? 'bg-white text-black border-white' : 'bg-zinc-900 text-zinc-400 border-zinc-800'}`}
+              className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${crop.aspectRatio === r.value ? 'bg-blue-600 text-white scale-105' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
             >
               {r.label}
             </button>
           ))}
         </div>
-      </footer>
+        
+        <div className="mt-6 flex items-center justify-center gap-4">
+          <input 
+            type="range" 
+            min="10" 
+            max="100" 
+            value={crop.width} 
+            onChange={(e) => {
+              const newW = parseInt(e.target.value);
+              const targetRatio = ratios.find(r => r.value === crop.aspectRatio)?.ratio || (crop.width * mediaAspectRatio / crop.height);
+              const newH = crop.aspectRatio === 'original' ? (newW / (crop.width / crop.height)) : (newW / (targetRatio / mediaAspectRatio));
+              
+              if (newH <= 100 && newW <= 100) {
+                setCrop(prev => ({
+                  ...prev,
+                  width: newW,
+                  height: newH,
+                  x: Math.min(prev.x, 100 - newW),
+                  y: Math.min(prev.y, 100 - newH)
+                }));
+              }
+            }}
+            className="w-full max-w-xs accent-blue-500"
+          />
+          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Zoom</span>
+        </div>
+      </div>
     </motion.div>
   );
 }
