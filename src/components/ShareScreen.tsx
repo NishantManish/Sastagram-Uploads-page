@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronLeft, MapPin, Users, Music, Settings, ChevronRight, Share2, Globe, Lock, Users2 } from 'lucide-react';
+import { ChevronLeft, MapPin, Users, Music, Settings, ChevronRight, Share2, Globe, Lock, Users2, Pencil } from 'lucide-react';
 import { motion } from 'motion/react';
 import { MediaItem } from './MediaSelector';
 
@@ -25,7 +25,16 @@ export default function ShareScreen({ images, mediaItems, postType, onBack, onSh
           <button onClick={onBack} className="p-2 hover:bg-zinc-800 rounded-full transition-colors">
             <ChevronLeft size={24} />
           </button>
-          <h1 className="text-xl font-bold tracking-tight capitalize">{postType}</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-bold tracking-tight capitalize">{postType}</h1>
+            <button 
+              onClick={onBack} 
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-xs font-bold transition-all border border-zinc-700/50 hover:border-zinc-600"
+            >
+              <Pencil size={12} />
+              Edit
+            </button>
+          </div>
         </div>
         <button 
           onClick={onShare} 
@@ -39,11 +48,11 @@ export default function ShareScreen({ images, mediaItems, postType, onBack, onSh
         <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-12">
           {/* Left Column: Preview & Caption */}
           <div className="space-y-8">
-            <div className="relative aspect-[4/5] bg-zinc-900 rounded-[2rem] overflow-hidden shadow-2xl ring-1 ring-white/10 group">
+            <div className="relative w-full max-h-[60vh] flex items-center justify-center bg-zinc-900 rounded-[2rem] overflow-hidden shadow-2xl ring-1 ring-white/10 group">
               {mediaItems[currentPreviewIndex].type === 'video' ? (
-                <video src={images[currentPreviewIndex]} className="w-full h-full object-cover" autoPlay loop muted playsInline />
+                <video src={images[currentPreviewIndex]} className="w-full h-full max-h-[60vh] object-contain" autoPlay loop muted playsInline />
               ) : (
-                <img src={images[currentPreviewIndex]} alt="Preview" className="w-full h-full object-cover" />
+                <img src={images[currentPreviewIndex]} alt="Preview" className="w-full h-full max-h-[60vh] object-contain" />
               )}
               
               {images.length > 1 && (

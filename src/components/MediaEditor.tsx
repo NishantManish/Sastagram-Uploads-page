@@ -86,8 +86,8 @@ const FILTERS = [
 
 export default function MediaEditor({ mediaItems, postType, onNext, onBack, showToast }: MediaEditorProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
-  const currentMedia = mediaItems[currentIndex];
-  const [mediaAspectRatios, setMediaAspectRatios] = useState<number[]>(mediaItems.map(() => 4/5));
+  const currentMedia = mediaItems[currentIndex] || mediaItems[0] || { url: '', type: 'image' };
+  const [mediaAspectRatios, setMediaAspectRatios] = useState<number[]>(mediaItems.map(() => 1));
 
   // Initialize states for each media item
   const [mediaStates, setMediaStates] = useState<EditorState[]>(mediaItems.map(() => ({
@@ -111,7 +111,15 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
   }])));
   const [historyIndices, setHistoryIndices] = useState<number[]>(mediaItems.map(() => 0));
 
-  const currentState = mediaStates[currentIndex];
+  const currentState = mediaStates[currentIndex] || {
+    elements: [],
+    filter: 'none',
+    baseRotation: 0,
+    baseFlipH: false,
+    crop: { x: 0, y: 0, width: 100, height: 100, aspectRatio: 'original' },
+    trim: { start: 0, end: 100 },
+    drawings: []
+  };
   const elements = currentState.elements;
   const currentFilter = currentState.filter;
   const baseRotation = currentState.baseRotation;
@@ -120,8 +128,8 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
   const trim = currentState.trim;
   const drawings = currentState.drawings;
 
-  const historyIndex = historyIndices[currentIndex];
-  const currentHistory = history[currentIndex];
+  const historyIndex = historyIndices[currentIndex] || 0;
+  const currentHistory = history[currentIndex] || [currentState];
 
   const [isEditingText, setIsEditingText] = useState(false);
   const [isCropping, setIsCropping] = useState(false);
@@ -141,6 +149,16 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
   const [stickerSearch, setStickerSearch] = useState('');
   const [activeElementId, setActiveElementId] = useState<string | null>(null);
   
+  const closeAllTools = () => {
+    setIsDrawing(false);
+    setIsCropping(false);
+    setIsTrimming(false);
+    setIsStickerDrawerOpen(false);
+    setIsFilterDrawerOpen(false);
+    setIsEditingText(false);
+    setActiveElementId(null);
+  };
+
   const containerRef = useRef<HTMLDivElement>(null);
   const drawingCanvasRef = useRef<SVGSVGElement>(null);
 
@@ -359,7 +377,26 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
       setTrashActive(false);
       setActiveElementId(null);
     } else {
-      const newElements = elements.map(el => el.id === id ? { ...el, x: el.x + info.offset.x, y: el.y + info.offset.y } : el);
+      let dx = info.offset.x;
+      let dy = info.offset.y;
+
+      const rot = (baseRotation % 360 + 360) % 360;
+      if (rot === 90) {
+        dx = info.offset.y;
+        dy = -info.offset.x;
+      } else if (rot === 180) {
+        dx = -info.offset.x;
+        dy = -info.offset.y;
+      } else if (rot === 270) {
+        dx = -info.offset.y;
+        dy = info.offset.x;
+      }
+
+      if (baseFlipH) {
+        dx = -dx;
+      }
+
+      const newElements = elements.map(el => el.id === id ? { ...el, x: el.x + dx, y: el.y + dy } : el);
       updateCurrentState({ elements: newElements });
       pushToHistory({ ...currentState, elements: newElements });
     }
@@ -539,7 +576,6 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
     );
   };
 
-  const [isReviewing, setIsReviewing] = useState(false);
   const [processedImages, setProcessedImages] = useState<string[]>([]);
 
   const handleNextStep = async () => {
@@ -574,11 +610,35 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
           const cropY = (state.crop.y / 100) * img.height;
 
           const isRotated = state.baseRotation === 90 || state.baseRotation === 270;
-          canvas.width = isRotated ? cropH : cropW;
-          canvas.height = isRotated ? cropW : cropH;
+          
+          // Cap canvas size to prevent crashes on very high-res or very long images
+          // 2048 is a safer limit for mobile browsers than 3000
+          const MAX_SIZE = 2048;
+          let canvasW = isRotated ? cropH : cropW;
+          let canvasH = isRotated ? cropW : cropH;
+          
+          // Ensure dimensions are at least 1
+          canvasW = Math.max(1, canvasW);
+          canvasH = Math.max(1, canvasH);
+          
+          let renderScale = 1;
 
+          if (canvasW > MAX_SIZE || canvasH > MAX_SIZE) {
+            renderScale = MAX_SIZE / Math.max(canvasW, canvasH);
+            canvasW = Math.floor(canvasW * renderScale);
+            canvasH = Math.floor(canvasH * renderScale);
+          }
+
+          canvas.width = canvasW;
+          canvas.height = canvasH;
+
+          ctx.clearRect(0, 0, canvasW, canvasH);
           ctx.save();
-          ctx.translate(canvas.width / 2, canvas.height / 2);
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          
+          ctx.scale(renderScale, renderScale);
+          ctx.translate(canvasW / renderScale / 2, canvasH / renderScale / 2);
           ctx.rotate((state.baseRotation * Math.PI) / 180);
           ctx.scale(state.baseFlipH ? -1 : 1, 1);
 
@@ -594,6 +654,7 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
 
           // Draw drawings - Now before restore so they get the same rotation/flip as the image
           state.drawings.forEach(path => {
+            ctx.save();
             ctx.beginPath();
             ctx.strokeStyle = path.color;
             // path.size is in units of 100 viewBox. Scale to image width.
@@ -602,48 +663,46 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
             ctx.lineJoin = 'round';
             
             if (path.type === 'neon') {
-              ctx.shadowBlur = 10;
+              ctx.shadowBlur = 30;
               ctx.shadowColor = path.color;
+              ctx.filter = 'none';
+              ctx.globalAlpha = 1;
             } else if (path.type === 'blur') {
-              ctx.filter = 'blur(2px)';
+              ctx.shadowBlur = 15;
+              ctx.shadowColor = path.color;
+              ctx.filter = 'blur(4px)';
+              ctx.globalAlpha = 0.6;
             } else {
               ctx.shadowBlur = 0;
               ctx.filter = 'none';
+              ctx.globalAlpha = 1;
             }
             
             path.points.forEach((p, idx) => {
-              // p.x, p.y are 0-100 relative to full image
-              const ix = (p.x / 100) * img.width;
-              const iy = (p.y / 100) * img.height;
-              
-              // Map to canvas coordinates (relative to center of crop)
-              const px = -cropW / 2 + (ix - cropX);
-              const py = -cropH / 2 + (iy - cropY);
+              // p.x, p.y are 0-100 relative to CROPPED image
+              const px = -cropW / 2 + (p.x / 100) * cropW;
+              const py = -cropH / 2 + (p.y / 100) * cropH;
               
               if (idx === 0) ctx.moveTo(px, py);
               else ctx.lineTo(px, py);
             });
             ctx.stroke();
-            ctx.filter = 'none';
-            ctx.shadowBlur = 0;
+            ctx.restore();
           });
 
           // Draw Elements (Stickers and Text) - BEFORE restore so they rotate with image
           const previewWidth = drawingCanvasRef.current?.clientWidth || 1;
-          const fullCanvasWidth = cropW / (state.crop.width / 100);
-          const scaleFactor = fullCanvasWidth / previewWidth;
+          
+          // scaleFactor maps screen pixels to CROPPED image pixels
+          const scaleFactor = cropW / previewWidth;
 
           state.elements.forEach(el => {
             ctx.save();
             
-            // Offset of crop center from image center
-            const offsetX = (cropX + cropW / 2) - img.width / 2;
-            const offsetY = (cropY + cropH / 2) - img.height / 2;
+            const finalCx = el.x * scaleFactor;
+            const finalCy = el.y * scaleFactor;
             
-            const cx = el.x * scaleFactor - offsetX;
-            const cy = el.y * scaleFactor - offsetY;
-            
-            ctx.translate(cx, cy);
+            ctx.translate(finalCx, finalCy);
             ctx.rotate((el.rotation * Math.PI) / 180);
             ctx.scale(el.scale * scaleFactor, el.scale * scaleFactor);
 
@@ -693,7 +752,7 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
     }
     
     setProcessedImages(results);
-    setIsReviewing(true);
+    onNext(results);
   };
 
   return (
@@ -761,150 +820,208 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
       </header>
 
       {/* Main Canvas Area */}
-      <main className="flex-1 bg-black relative flex flex-col items-center justify-center p-4 md:p-12 overflow-hidden">
-        <div className="relative w-full h-full flex items-center justify-center">
-          <div 
-            className="relative bg-zinc-900 rounded-[2rem] overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.5)] ring-1 ring-white/10"
-            style={{ 
-              aspectRatio: mediaAspectRatios[currentIndex],
-              maxWidth: '100%',
-              maxHeight: '100%'
-            }}
-          >
-            {/* Invisible image to force size and aspect ratio */}
-            {currentMedia.type === 'video' ? (
-              <video src={currentMedia.url} className="max-w-full max-h-full opacity-0 pointer-events-none" style={{ maxHeight: 'calc(100vh - 200px)' }} />
-            ) : (
-              <img src={currentMedia.url} className="max-w-full max-h-full opacity-0 pointer-events-none" style={{ maxHeight: 'calc(100vh - 200px)' }} />
-            )}
-            
-            <div 
-              className="absolute inset-0 w-full h-full transition-all duration-300"
-              style={{
-                transform: `rotate(${baseRotation}deg) scaleX(${baseFlipH ? -1 : 1})`,
-                clipPath: crop.aspectRatio === 'original' ? 'none' : `inset(${crop.y}% ${100 - (crop.x + crop.width)}% ${100 - (crop.y + crop.height)}% ${crop.x}%)`,
-              }}
-            >
-              {currentMedia.type === 'video' ? (
-                <video 
-                  src={currentMedia.url} 
-                  className="w-full h-full object-cover pointer-events-none select-none" 
-                  autoPlay 
-                  loop 
-                  muted 
-                  playsInline
-                  onLoadedMetadata={(e) => {
-                    const video = e.currentTarget;
-                    const ratio = video.videoWidth / video.videoHeight;
-                    setMediaAspectRatios(prev => {
-                      const next = [...prev];
-                      next[currentIndex] = ratio;
-                      return next;
-                    });
-                  }}
-                  style={{ filter: currentFilter }}
-                />
-              ) : (
-                <img 
-                  src={currentMedia.url} 
-                  alt="Media" 
-                  className="w-full h-full object-cover pointer-events-none select-none" 
-                  onLoad={(e) => {
-                    const img = e.currentTarget;
-                    const ratio = img.naturalWidth / img.naturalHeight;
-                    setMediaAspectRatios(prev => {
-                      const next = [...prev];
-                      next[currentIndex] = ratio;
-                      return next;
-                    });
-                  }}
-                  style={{ filter: currentFilter }}
-                />
-              )}
-
-              {/* Drawing Layer - Now inside transformed div to stay aligned with image pixels */}
-              <svg 
-                ref={drawingCanvasRef}
-                viewBox="0 0 100 100"
-                preserveAspectRatio="none"
-                className={`absolute inset-0 z-20 pointer-events-auto ${isDrawing ? 'cursor-crosshair' : 'pointer-events-none'}`}
-                style={{ touchAction: 'none' }}
-                onPointerDown={handleDrawingStart}
-                onPointerMove={handleDrawingMove}
-                onPointerUp={handleDrawingEnd}
-                onPointerLeave={handleDrawingEnd}
+      <main 
+        className="flex-1 bg-black relative flex flex-col items-center justify-center p-4 md:p-12 overflow-hidden"
+        onPointerDown={(e) => {
+          if (e.target === e.currentTarget) {
+            setActiveElementId(null);
+          }
+        }}
+      >
+        <div 
+          className="relative w-full h-full flex items-center justify-center"
+          onPointerDown={(e) => {
+            if (e.target === e.currentTarget) {
+              setActiveElementId(null);
+            }
+          }}
+        >
+          {(() => {
+            const currentAspectRatio = (crop.width / crop.height) * (mediaAspectRatios[currentIndex] || 1);
+            const displayAspectRatio = (baseRotation === 90 || baseRotation === 270) ? 1 / currentAspectRatio : currentAspectRatio;
+            return (
+              <div 
+                className="relative bg-zinc-900 rounded-[2rem] overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.5)] ring-1 ring-white/10"
+                style={{ 
+                  aspectRatio: displayAspectRatio,
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  width: 'auto',
+                  height: 'auto',
+                  objectFit: 'contain'
+                }}
+                onPointerDown={(e) => {
+                  if (e.target === e.currentTarget) {
+                    setActiveElementId(null);
+                  }
+                }}
               >
-                {drawings.map(path => (
-                  <polyline
-                    key={path.id}
-                    points={path.points.map(p => `${p.x},${p.y}`).join(' ')}
-                    fill="none"
-                    stroke={path.color}
-                    strokeWidth={path.size}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="pointer-events-none"
-                    style={{ filter: path.type === 'neon' ? 'drop-shadow(0 0 5px currentColor)' : path.type === 'blur' ? 'blur(2px)' : 'none' }}
-                  />
-                ))}
-                {currentPath && (
-                  <polyline
-                    points={currentPath.points.map(p => `${p.x},${p.y}`).join(' ')}
-                    fill="none"
-                    stroke={currentPath.color}
-                    strokeWidth={currentPath.size}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="pointer-events-none"
-                    style={{ filter: currentPath.type === 'neon' ? 'drop-shadow(0 0 5px currentColor)' : currentPath.type === 'blur' ? 'blur(2px)' : 'none' }}
+                {/* Invisible image to force size and aspect ratio */}
+                {currentMedia.type === 'video' ? (
+                  <video src={currentMedia.url} className="max-w-full max-h-full opacity-0 pointer-events-none" style={{ maxHeight: 'calc(100vh - 200px)', aspectRatio: displayAspectRatio }} />
+                ) : (
+                  <img src={currentMedia.url} className="max-w-full max-h-full opacity-0 pointer-events-none" style={{ maxHeight: 'calc(100vh - 200px)', aspectRatio: displayAspectRatio }} />
+                )}
+                
+                <div 
+                  className="absolute inset-0 w-full h-full transition-all duration-300"
+                  style={{
+                    transform: `rotate(${baseRotation}deg) scaleX(${baseFlipH ? -1 : 1})`,
+                    width: (baseRotation === 90 || baseRotation === 270) ? `calc(100% * ${currentAspectRatio})` : '100%',
+                    height: (baseRotation === 90 || baseRotation === 270) ? `calc(100% / ${currentAspectRatio})` : '100%',
+                    left: '50%',
+                    top: '50%',
+                    translate: '-50% -50%',
+                  }}
+                >
+                  {/* Image Wrapper - Applies Crop */}
+                  <div 
+                    className="absolute"
+                    style={{
+                      width: `${100 / (crop.width / 100)}%`,
+                      height: `${100 / (crop.height / 100)}%`,
+                      left: `${-crop.x / (crop.width / 100)}%`,
+                      top: `${-crop.y / (crop.height / 100)}%`,
+                    }}
+                  >
+                    {currentMedia.type === 'video' ? (
+                      <video 
+                        src={currentMedia.url} 
+                        className="w-full h-full object-cover pointer-events-none select-none" 
+                        autoPlay 
+                        loop 
+                        muted 
+                        playsInline
+                        onLoadedMetadata={(e) => {
+                          const video = e.currentTarget;
+                          const ratio = video.videoWidth / video.videoHeight;
+                          if (ratio && isFinite(ratio)) {
+                            setMediaAspectRatios(prev => {
+                              const next = [...prev];
+                              next[currentIndex] = ratio;
+                              return next;
+                            });
+                          }
+                        }}
+                        style={{ filter: currentFilter }}
+                      />
+                    ) : (
+                      <img 
+                        src={currentMedia.url} 
+                        alt="Media" 
+                        className="w-full h-full object-cover pointer-events-none select-none" 
+                        onLoad={(e) => {
+                          const img = e.currentTarget;
+                          const ratio = img.naturalWidth / img.naturalHeight;
+                          if (ratio && isFinite(ratio)) {
+                            setMediaAspectRatios(prev => {
+                              const next = [...prev];
+                              next[currentIndex] = ratio;
+                              return next;
+                            });
+                          }
+                        }}
+                        style={{ filter: currentFilter }}
+                      />
+                    )}
+                  </div>
+
+
+                {/* Drawing Layer */}
+                <svg 
+                  ref={drawingCanvasRef}
+                  viewBox="0 0 100 100"
+                  preserveAspectRatio="none"
+                  className={`absolute inset-0 z-30 pointer-events-auto overflow-visible ${isDrawing ? 'cursor-crosshair' : 'pointer-events-none'}`}
+                  style={{ touchAction: 'none' }}
+                  onPointerDown={handleDrawingStart}
+                  onPointerMove={handleDrawingMove}
+                  onPointerUp={handleDrawingEnd}
+                  onPointerLeave={handleDrawingEnd}
+                >
+                  {drawings.map(path => (
+                    <polyline
+                      key={path.id}
+                      points={path.points.map(p => `${p.x},${p.y}`).join(' ')}
+                      fill="none"
+                      stroke={path.color}
+                      strokeWidth={path.size}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="pointer-events-none"
+                      style={{ filter: path.type === 'neon' ? `drop-shadow(0 0 8px ${path.color}) drop-shadow(0 0 2px #fff)` : path.type === 'blur' ? 'blur(2px)' : 'none' }}
+                    />
+                  ))}
+                  {currentPath && (
+                    <polyline
+                      points={currentPath.points.map(p => `${p.x},${p.y}`).join(' ')}
+                      fill="none"
+                      stroke={currentPath.color}
+                      strokeWidth={currentPath.size}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="pointer-events-none"
+                      style={{ filter: currentPath.type === 'neon' ? `drop-shadow(0 0 8px ${currentPath.color}) drop-shadow(0 0 2px #fff)` : currentPath.type === 'blur' ? 'blur(2px)' : 'none' }}
+                    />
+                  )}
+                </svg>
+
+                {/* Elements Layer */}
+                <div 
+                  className={`absolute inset-0 overflow-hidden pointer-events-auto ${isDrawing ? 'z-20' : 'z-40'}`}
+                  onPointerDown={(e) => {
+                    if (e.target === e.currentTarget) {
+                      setActiveElementId(null);
+                    }
+                  }}
+                >
+                  {elements.map((el, index) => (
+                    <EditorElementItem
+                      key={el.id}
+                      el={el}
+                      isActive={activeElementId === el.id}
+                      index={index}
+                      isDragging={isDragging}
+                      onDragStart={() => handleDragStart(el.id)}
+                      onDrag={handleDrag}
+                      onDragEnd={(e, info) => handleDragEnd(el.id, e, info)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveElementId(el.id);
+                      }}
+                      onDoubleClick={() => {
+                        if (el.type === 'text') {
+                          setEditingElementId(el.id);
+                          setIsEditingText(true);
+                        }
+                      }}
+                      onUpdate={updateElement}
+                      onDelete={handleDelete}
+                      onRotate={handleRotate}
+                      onScale={handleScale}
+                      onWidth={handleWidth}
+                      containerRef={containerRef}
+                      baseRotation={baseRotation}
+                      baseFlipH={baseFlipH}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* Guides */}
+              <AnimatePresence>
+                {showCenterGuide && (
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="absolute top-0 bottom-0 left-1/2 w-[2px] bg-blue-500/50 z-20 pointer-events-none shadow-[0_0_10px_rgba(59,130,246,0.5)]"
                   />
                 )}
-              </svg>
-
-              {/* Elements Layer - Now inside transformed div to stay aligned and clipped */}
-              <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                {elements.map(el => (
-                  <EditorElementItem
-                    key={el.id}
-                    el={el}
-                    isActive={activeElementId === el.id}
-                    isDragging={isDragging}
-                    onDragStart={() => handleDragStart(el.id)}
-                    onDrag={handleDrag}
-                    onDragEnd={(e, info) => handleDragEnd(el.id, e, info)}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setActiveElementId(el.id);
-                    }}
-                    onDoubleClick={() => {
-                      if (el.type === 'text') {
-                        setEditingElementId(el.id);
-                        setIsEditingText(true);
-                      }
-                    }}
-                    onUpdate={updateElement}
-                    onDelete={handleDelete}
-                    onRotate={handleRotate}
-                    onScale={handleScale}
-                    onWidth={handleWidth}
-                    containerRef={containerRef}
-                  />
-                ))}
-              </div>
+              </AnimatePresence>
             </div>
-
-            {/* Guides */}
-            <AnimatePresence>
-              {showCenterGuide && (
-                <motion.div 
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  className="absolute top-0 bottom-0 left-1/2 w-[2px] bg-blue-500/50 z-20 pointer-events-none shadow-[0_0_10px_rgba(59,130,246,0.5)]"
-                />
-              )}
-            </AnimatePresence>
-          </div>
+            );
+          })()}
         </div>
 
         {/* Thumbnail Bar */}
@@ -1038,16 +1155,16 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
           )}
 
           <aside className="w-full flex flex-row items-center justify-start md:justify-center px-6 py-4 gap-4 md:gap-8 overflow-x-auto no-scrollbar">
-            <ToolButton icon={<Type size={24} />} label="Text" onClick={handleAddText} />
-            <ToolButton icon={<Smile size={24} />} label="Stickers" onClick={() => setIsStickerDrawerOpen(true)} />
-            <ToolButton icon={<Pencil size={24} />} label="Draw" active={isDrawing} onClick={() => setIsDrawing(!isDrawing)} />
-            <ToolButton icon={<Sparkles size={24} />} label="Filters" onClick={() => setIsFilterDrawerOpen(true)} />
-            <ToolButton icon={<Crop size={24} />} label="Crop" onClick={() => setIsCropping(true)} />
+            <ToolButton icon={<Type size={24} />} label="Text" onClick={() => { closeAllTools(); handleAddText(); }} />
+            <ToolButton icon={<Smile size={24} />} label="Stickers" active={isStickerDrawerOpen} onClick={() => { const wasOpen = isStickerDrawerOpen; closeAllTools(); setIsStickerDrawerOpen(!wasOpen); }} />
+            <ToolButton icon={<Pencil size={24} />} label="Draw" active={isDrawing} onClick={() => { const wasDrawing = isDrawing; closeAllTools(); setIsDrawing(!wasDrawing); }} />
+            <ToolButton icon={<Sparkles size={24} />} label="Filters" active={isFilterDrawerOpen} onClick={() => { const wasOpen = isFilterDrawerOpen; closeAllTools(); setIsFilterDrawerOpen(!wasOpen); }} />
+            <ToolButton icon={<Crop size={24} />} label="Crop" active={isCropping} onClick={() => { closeAllTools(); setIsCropping(true); }} />
             {currentMedia.type === 'video' && (
-              <ToolButton icon={<Scissors size={24} />} label="Trim" active={isTrimming} onClick={() => setIsTrimming(!isTrimming)} />
+              <ToolButton icon={<Scissors size={24} />} label="Trim" active={isTrimming} onClick={() => { const wasTrimming = isTrimming; closeAllTools(); setIsTrimming(!wasTrimming); }} />
             )}
-            <ToolButton icon={<RotateCw size={24} />} label="Rotate" onClick={handleRotateBase} />
-            <ToolButton icon={<FlipHorizontal size={24} />} label="Flip" onClick={handleFlipBase} />
+            <ToolButton icon={<RotateCw size={24} />} label="Rotate" onClick={() => { closeAllTools(); handleRotateBase(); }} />
+            <ToolButton icon={<FlipHorizontal size={24} />} label="Flip" onClick={() => { closeAllTools(); handleFlipBase(); }} />
             <ToolButton icon={<Music size={24} />} label="Music" onClick={() => showToast('Music library...')} />
           </aside>
 
@@ -1193,49 +1310,14 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
             media={currentMedia.url} 
             mediaType={currentMedia.type}
             initialCrop={crop}
-            mediaAspectRatio={mediaAspectRatios[currentIndex]}
+            mediaAspectRatio={mediaAspectRatios[currentIndex] || 1}
             onApply={handleApplyCrop}
             onCancel={() => setIsCropping(false)}
           />
         )}
       </AnimatePresence>
 
-      {/* Review Modal */}
-      <AnimatePresence>
-        {isReviewing && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/95 z-[300] flex flex-col"
-          >
-            <header className="p-6 flex justify-between items-center border-b border-zinc-800">
-              <button onClick={() => setIsReviewing(false)} className="text-blue-500 font-bold text-lg">Edit</button>
-              <h3 className="text-lg font-bold">Final Review</h3>
-              <button onClick={() => onNext(processedImages)} className="px-8 py-2 bg-blue-600 text-white rounded-full font-bold shadow-lg shadow-blue-600/20">Confirm</button>
-            </header>
-            <div className="flex-1 overflow-y-auto p-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {processedImages.map((img, idx) => (
-                <div key={idx} className="space-y-4">
-                  <div 
-                    className="bg-zinc-900 rounded-3xl overflow-hidden shadow-2xl ring-1 ring-white/10"
-                  >
-                    {mediaItems[idx].type === 'video' ? (
-                      <video src={img} className="w-full h-auto block" autoPlay loop muted playsInline />
-                    ) : (
-                      <img src={img} className="w-full h-auto block" alt={`Review ${idx}`} />
-                    )}
-                  </div>
-                  <div className="flex justify-between items-center px-2">
-                    <span className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Item {idx + 1}</span>
-                    <span className="text-[10px] px-2 py-1 bg-zinc-800 rounded-lg text-zinc-400 font-bold uppercase">{mediaItems[idx].type}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+
 
       {/* Text Editor Overlay */}
       {isEditingText && (
@@ -1253,6 +1335,7 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
 function EditorElementItem({ 
   el, 
   isActive, 
+  index,
   isDragging, 
   onDragStart, 
   onDrag, 
@@ -1264,10 +1347,13 @@ function EditorElementItem({
   onRotate, 
   onScale, 
   onWidth,
-  containerRef
+  containerRef,
+  baseRotation,
+  baseFlipH
 }: { 
   el: EditorElement, 
   isActive: boolean, 
+  index: number,
   isDragging: boolean, 
   onDragStart: () => void, 
   onDrag: (e: any, info: any) => void, 
@@ -1280,15 +1366,61 @@ function EditorElementItem({
   onScale: (id: string, e: any) => void,
   onWidth: (id: string, e: any) => void,
   containerRef: React.RefObject<HTMLDivElement>,
+  baseRotation: number,
+  baseFlipH: boolean,
   key?: any
 }) {
+  const x = useMotionValue(el.x);
+  const y = useMotionValue(el.y);
+
+  useEffect(() => {
+    if (!isDragging) {
+      x.set(el.x);
+      y.set(el.y);
+    }
+  }, [el.x, el.y, isDragging]);
+
   const bind = useGesture(
     {
-      onPinch: ({ offset: [d, a] }) => {
-        onUpdate(el.id, { scale: d, rotation: a }, false);
+      onDrag: ({ active, movement: [mx, my], xy: [px, py], first, last }) => {
+        if (first) onDragStart();
+        
+        let dx = mx;
+        let dy = my;
+        
+        if (baseRotation === 90) {
+          dx = my;
+          dy = -mx;
+        } else if (baseRotation === 180) {
+          dx = -mx;
+          dy = -my;
+        } else if (baseRotation === 270) {
+          dx = -my;
+          dy = mx;
+        }
+        
+        if (baseFlipH) {
+          dx = -dx;
+        }
+
+        if (active) {
+          x.set(el.x + dx);
+          y.set(el.y + dy);
+          onDrag(null, { point: { x: px, y: py }, offset: { x: dx, y: dy } });
+        }
+        if (last) {
+          onDragEnd(null, { offset: { x: dx, y: dy } });
+        }
+      },
+      onPinch: ({ offset: [s, a] }) => {
+        onUpdate(el.id, { scale: s, rotation: a }, false);
       },
     },
     {
+      drag: {
+        filterTaps: true,
+        from: () => [0, 0],
+      },
       pinch: {
         from: () => [el.scale, el.rotation]
       }
@@ -1298,24 +1430,21 @@ function EditorElementItem({
   return (
     <motion.div
       {...(bind() as any)}
-      drag
-      dragMomentum={false}
-      onDragStart={onDragStart}
-      onDrag={onDrag}
-      onDragEnd={onDragEnd}
+      drag={false}
+      onDragStart={undefined}
+      onDrag={undefined}
+      onDragEnd={undefined}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       initial={{ scale: 0, opacity: 0 }}
       animate={{ 
         scale: el.scale, 
-        x: el.x, 
-        y: el.y, 
         rotate: el.rotation,
         opacity: 1,
-        zIndex: isActive ? 50 : 10
+        zIndex: index + 10
       }}
-      className={`absolute left-1/2 top-1/2 cursor-grab active:cursor-grabbing group element-container ${isActive ? 'ring-2 ring-blue-500 ring-offset-4 ring-offset-transparent rounded-lg' : ''}`}
-      style={{ touchAction: 'none' }}
+      style={{ x, y, touchAction: 'none' }}
+      className={`absolute left-1/2 top-1/2 cursor-grab active:cursor-grabbing group element-container pointer-events-auto ${isActive ? 'ring-2 ring-blue-500 ring-offset-4 ring-offset-transparent rounded-lg' : ''}`}
     >
       <div className="absolute -translate-x-1/2 -translate-y-1/2 flex items-center justify-center">
         {el.type === 'text' && el.style ? (
@@ -1454,6 +1583,24 @@ function CropOverlay({ media, mediaType, initialCrop, mediaAspectRatio, onApply,
           y: Math.max(0, Math.min(100 - prev.height, prev.y + dyPct))
         }));
       },
+      onPinch: ({ delta: [ds] }) => {
+        setCrop(prev => {
+          const newW = Math.max(10, Math.min(100, prev.width * (1 + ds)));
+          const targetRatio = ratios.find(r => r.value === prev.aspectRatio)?.ratio || (prev.width * mediaAspectRatio / prev.height);
+          const newH = prev.aspectRatio === 'original' ? (newW / (prev.width / prev.height)) : (newW / (targetRatio / mediaAspectRatio));
+          
+          if (newH <= 100 && newW <= 100) {
+            return {
+              ...prev,
+              width: newW,
+              height: newH,
+              x: Math.max(0, Math.min(100 - newW, prev.x - (newW - prev.width) / 2)),
+              y: Math.max(0, Math.min(100 - newH, prev.y - (newH - prev.height) / 2))
+            };
+          }
+          return prev;
+        });
+      }
     },
     { drag: { filterTaps: true } }
   );
@@ -1526,8 +1673,12 @@ function CropOverlay({ media, mediaType, initialCrop, mediaAspectRatio, onApply,
       <div className="flex-1 relative flex items-center justify-center p-4 sm:p-8">
         <div 
           ref={containerRef}
-          className="w-full max-w-lg relative bg-zinc-900 rounded-2xl overflow-hidden shadow-2xl"
-          style={{ aspectRatio: mediaAspectRatio }}
+          className="w-full relative bg-zinc-900 rounded-2xl overflow-hidden shadow-2xl mx-auto"
+          style={{ 
+            aspectRatio: mediaAspectRatio,
+            maxHeight: '60vh',
+            maxWidth: `min(32rem, calc(60vh * ${mediaAspectRatio}))`
+          }}
         >
           {mediaType === 'video' ? (
             <video src={media} className="w-full h-full object-cover opacity-40" muted playsInline />
@@ -1564,10 +1715,12 @@ function CropOverlay({ media, mediaType, initialCrop, mediaAspectRatio, onApply,
                 } border-blue-500 cursor-nwse-resize`}
                 onPointerDown={(e) => {
                   e.stopPropagation();
-                  const startX = e.clientX;
-                  const startY = e.clientY;
+                  let lastX = e.clientX;
+                  let lastY = e.clientY;
                   const onMove = (moveEvent: PointerEvent) => {
-                    handleResize(corner, moveEvent.clientX - startX, moveEvent.clientY - startY);
+                    handleResize(corner, moveEvent.clientX - lastX, moveEvent.clientY - lastY);
+                    lastX = moveEvent.clientX;
+                    lastY = moveEvent.clientY;
                   };
                   const onUp = () => {
                     window.removeEventListener('pointermove', onMove);
@@ -1591,10 +1744,12 @@ function CropOverlay({ media, mediaType, initialCrop, mediaAspectRatio, onApply,
                 } bg-blue-500/50 rounded-full`}
                 onPointerDown={(e) => {
                   e.stopPropagation();
-                  const startX = e.clientX;
-                  const startY = e.clientY;
+                  let lastX = e.clientX;
+                  let lastY = e.clientY;
                   const onMove = (moveEvent: PointerEvent) => {
-                    handleResize(edge, moveEvent.clientX - startX, moveEvent.clientY - startY);
+                    handleResize(edge, moveEvent.clientX - lastX, moveEvent.clientY - lastY);
+                    lastX = moveEvent.clientX;
+                    lastY = moveEvent.clientY;
                   };
                   const onUp = () => {
                     window.removeEventListener('pointermove', onMove);

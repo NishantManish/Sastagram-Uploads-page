@@ -78,7 +78,7 @@ export default function MediaSelector({ onSelect, onClose, showToast }: MediaSel
   };
 
   return (
-    <div className="flex-1 flex flex-col bg-zinc-950 h-screen overflow-hidden">
+    <div className="flex-1 flex flex-col bg-zinc-950 min-h-screen">
       {/* Header */}
       <header className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/50 backdrop-blur-xl bg-zinc-950/80 sticky top-0 z-50">
         <div className="flex items-center gap-4">
@@ -124,10 +124,14 @@ export default function MediaSelector({ onSelect, onClose, showToast }: MediaSel
         </div>
       </div>
       
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+      <div className="flex-1 flex flex-col md:flex-row overflow-y-auto md:overflow-hidden">
         {/* Main Preview Area */}
         <div className="flex-[1.5] bg-black flex items-center justify-center p-4 md:p-8 relative group">
-          <div className="w-full max-w-2xl aspect-[4/5] bg-zinc-900 rounded-3xl overflow-hidden shadow-2xl ring-1 ring-white/10 relative">
+          <div 
+            className={`w-full max-w-2xl bg-zinc-900 rounded-3xl overflow-hidden shadow-2xl ring-1 ring-white/10 relative transition-all duration-300 ${
+              postType === 'post' ? 'aspect-[4/5]' : 'aspect-[9/16]'
+            } max-h-[50vh] md:max-h-none`}
+          >
             {selectedItems.length > 0 ? (
               <motion.div
                 key={selectedItems[selectedItems.length - 1].url}
@@ -138,7 +142,7 @@ export default function MediaSelector({ onSelect, onClose, showToast }: MediaSel
                 {selectedItems[selectedItems.length - 1].type === 'video' ? (
                   <video 
                     src={selectedItems[selectedItems.length - 1].url} 
-                    className="w-full h-full object-cover" 
+                    className="w-full h-full object-contain" 
                     autoPlay 
                     loop 
                     muted 
@@ -148,7 +152,7 @@ export default function MediaSelector({ onSelect, onClose, showToast }: MediaSel
                   <img 
                     src={selectedItems[selectedItems.length - 1].url} 
                     alt="Preview" 
-                    className="w-full h-full object-cover" 
+                    className="w-full h-full object-contain" 
                   />
                 )}
               </motion.div>
@@ -174,7 +178,7 @@ export default function MediaSelector({ onSelect, onClose, showToast }: MediaSel
         </div>
 
         {/* Gallery Sidebar */}
-        <div className="flex-1 border-l border-zinc-800/50 flex flex-col bg-zinc-950 overflow-hidden">
+        <div className="flex-1 border-l border-zinc-800/50 flex flex-col bg-zinc-950">
           <div className="p-6 space-y-6">
             <div className="flex items-center justify-between relative z-40">
               <div className="relative">
@@ -262,18 +266,18 @@ export default function MediaSelector({ onSelect, onClose, showToast }: MediaSel
                       onClick={() => toggleSelection(item)}
                       className={`aspect-square rounded-xl overflow-hidden cursor-pointer relative ring-2 transition-all ${isSelected ? 'ring-blue-500 ring-offset-2 ring-offset-zinc-950' : 'ring-transparent opacity-70 hover:opacity-100'}`}
                     >
-                      <div className="w-full h-full relative">
+                      <div className="w-full h-full relative flex items-center justify-center bg-zinc-900">
                         {item.type === 'video' ? (
                           <video 
                             src={item.url} 
-                            className="w-full h-full object-cover absolute inset-0" 
+                            className="w-full h-full object-contain absolute inset-0" 
                             muted 
                             playsInline
                           />
                         ) : (
                           <img 
                             src={item.url} 
-                            className="w-full h-full object-cover absolute inset-0 bg-zinc-900" 
+                            className="w-full h-full object-contain absolute inset-0" 
                             alt="Gallery" 
                           />
                         )}

@@ -19,15 +19,15 @@ export default function SastagramUpload() {
   };
 
   return (
-    <div className="w-full min-h-screen bg-zinc-950 text-white relative flex flex-col">
-      <AnimatePresence mode="wait">
+    <div className="w-full min-h-screen bg-zinc-950 text-white relative flex flex-col overflow-hidden">
+      <AnimatePresence>
         {flowState === 'select' && (
           <motion.div 
             key="select"
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 20 }}
-            className="flex-1 flex flex-col"
+            className="absolute inset-0 flex flex-col z-30 bg-zinc-950"
           >
             <MediaSelector 
               onSelect={(items, type) => { 
@@ -40,47 +40,58 @@ export default function SastagramUpload() {
             />
           </motion.div>
         )}
-        {flowState === 'edit' && mediaItems.length > 0 && (
-          <motion.div 
-            key="edit"
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 1.05 }}
-            className="flex-1 flex flex-col"
-          >
-            <MediaEditor 
-              mediaItems={mediaItems} 
-              postType={postType}
-              onNext={(imgs) => { setEditedImages(imgs); setFlowState('share'); }} 
-              onBack={() => setFlowState('select')} 
-              showToast={showToast}
-            />
-          </motion.div>
-        )}
-        {flowState === 'share' && editedImages.length > 0 && (
-          <motion.div 
-            key="share"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            className="flex-1 flex flex-col"
-          >
-            <ShareScreen 
-              images={editedImages} 
-              mediaItems={mediaItems}
-              postType={postType}
-              onBack={() => setFlowState('edit')} 
-              onShare={() => {
-                showToast('Successfully posted to Sastagram!');
-                setFlowState('select');
-                setMediaItems([]);
-                setEditedImages([]);
-              }} 
-              showToast={showToast}
-            />
-          </motion.div>
-        )}
       </AnimatePresence>
+
+      {(flowState === 'edit' || flowState === 'share') && mediaItems.length > 0 && (
+        <motion.div 
+          initial={false}
+          animate={{ 
+            opacity: flowState === 'edit' ? 1 : 0, 
+            scale: flowState === 'edit' ? 1 : 0.95,
+            pointerEvents: flowState === 'edit' ? 'auto' : 'none'
+          }}
+          className="absolute inset-0 flex flex-col bg-zinc-950"
+          style={{ zIndex: flowState === 'edit' ? 20 : 10 }}
+        >
+          <MediaEditor 
+            mediaItems={mediaItems} 
+            postType={postType}
+            onNext={(imgs) => { setEditedImages(imgs); setFlowState('share'); }} 
+            onBack={() => {
+              setFlowState('select');
+              setMediaItems([]);
+            }} 
+            showToast={showToast}
+          />
+        </motion.div>
+      )}
+
+      {(flowState === 'edit' || flowState === 'share') && mediaItems.length > 0 && editedImages.length > 0 && (
+        <motion.div 
+          initial={false}
+          animate={{ 
+            opacity: flowState === 'share' ? 1 : 0, 
+            x: flowState === 'share' ? 0 : 20,
+            pointerEvents: flowState === 'share' ? 'auto' : 'none'
+          }}
+          className="absolute inset-0 flex flex-col bg-zinc-950"
+          style={{ zIndex: flowState === 'share' ? 30 : 10 }}
+        >
+          <ShareScreen 
+            images={editedImages} 
+            mediaItems={mediaItems}
+            postType={postType}
+            onBack={() => setFlowState('edit')} 
+            onShare={() => {
+              showToast('Successfully posted to Sastagram!');
+              setFlowState('select');
+              setMediaItems([]);
+              setEditedImages([]);
+            }} 
+            showToast={showToast}
+          />
+        </motion.div>
+      )}
 
       <AnimatePresence>
         {toast && (
