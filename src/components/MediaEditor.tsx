@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { ChevronLeft, Music, Smile, Sparkles, Trash2, ChevronRight, MoreHorizontal, RotateCcw, Maximize2, Type, Layers, Wand2, X, Undo, Redo, RotateCw, Trash, ArrowUpToLine, ArrowUp, ArrowDown, ArrowDownToLine, Search, Sliders, Crop, FlipHorizontal, Pencil, Eraser, Scissors, Palette } from 'lucide-react';
+import { ChevronLeft, Music, Smile, Sparkles, Trash2, ChevronRight, MoreHorizontal, RotateCcw, Maximize2, Type, Layers, Wand2, X, Undo, Redo, RotateCw, Trash, ArrowUpToLine, ArrowUp, ArrowDown, ArrowDownToLine, Search, Sliders, Crop, FlipHorizontal, Pencil, Eraser, Scissors, Palette, Volume2, VolumeX, Gauge } from 'lucide-react';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'motion/react';
 import { useGesture } from '@use-gesture/react';
 import TextEditor, { TextStyle, getFontClass, getBgColor, getTextShadow, getWebkitTextStroke } from './TextEditor';
@@ -38,13 +38,16 @@ export type EditorState = {
     aspectRatio: string;
   };
   trim: { start: number; end: number };
+  speed: number;
+  muted: boolean;
   drawings: DrawingPath[];
+  previewWidth?: number;
 };
 
 interface MediaEditorProps {
   mediaItems: MediaItem[];
   postType: 'post' | 'story' | 'reel';
-  onNext: (images: string[]) => void;
+  onNext: (images: string[], states: EditorState[]) => void;
   onBack: () => void;
   showToast: (msg: string) => void;
 }
@@ -97,6 +100,8 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
     baseFlipH: false,
     crop: { x: 0, y: 0, width: 100, height: 100, aspectRatio: 'original' },
     trim: { start: 0, end: 100 },
+    speed: 1,
+    muted: false,
     drawings: []
   })));
 
@@ -107,6 +112,8 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
     baseFlipH: false,
     crop: { x: 0, y: 0, width: 100, height: 100, aspectRatio: 'original' },
     trim: { start: 0, end: 100 },
+    speed: 1,
+    muted: false,
     drawings: []
   }])));
   const [historyIndices, setHistoryIndices] = useState<number[]>(mediaItems.map(() => 0));
@@ -118,6 +125,8 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
     baseFlipH: false,
     crop: { x: 0, y: 0, width: 100, height: 100, aspectRatio: 'original' },
     trim: { start: 0, end: 100 },
+    speed: 1,
+    muted: false,
     drawings: []
   };
   const elements = currentState.elements;
@@ -126,6 +135,8 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
   const baseFlipH = currentState.baseFlipH;
   const crop = currentState.crop;
   const trim = currentState.trim;
+  const speed = currentState.speed;
+  const muted = currentState.muted;
   const drawings = currentState.drawings;
 
   const historyIndex = historyIndices[currentIndex] || 0;
@@ -161,6 +172,42 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
 
   const containerRef = useRef<HTMLDivElement>(null);
   const drawingCanvasRef = useRef<SVGSVGElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.playbackRate = speed;
+      videoRef.current.muted = muted;
+    }
+  }, [speed, muted, currentIndex]);
+
+  useEffect(() => {
+    const updatePreviewWidth = () => {
+      if (drawingCanvasRef.current) {
+        const width = drawingCanvasRef.current.clientWidth;
+        if (width > 0 && currentState.previewWidth !== width) {
+          updateCurrentState({ previewWidth: width });
+        }
+      }
+    };
+
+    updatePreviewWidth();
+    window.addEventListener('resize', updatePreviewWidth);
+    return () => window.removeEventListener('resize', updatePreviewWidth);
+  }, [currentIndex, currentState.previewWidth]);
+
+  const handleTimeUpdate = () => {
+    if (videoRef.current && currentMedia.type === 'video') {
+      const duration = videoRef.current.duration;
+      if (!duration) return;
+      const startTime = (trim.start / 100) * duration;
+      const endTime = (trim.end / 100) * duration;
+      
+      if (videoRef.current.currentTime < startTime || videoRef.current.currentTime > endTime) {
+        videoRef.current.currentTime = startTime;
+      }
+    }
+  };
 
   const updateCurrentState = (updates: Partial<EditorState>) => {
     setMediaStates(prev => {
@@ -396,7 +443,14 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
         dx = -dx;
       }
 
-      const newElements = elements.map(el => el.id === id ? { ...el, x: el.x + dx, y: el.y + dy } : el);
+      const rect = containerRef.current?.getBoundingClientRect();
+      const width = rect?.width || 1;
+      const height = rect?.height || 1;
+
+      const dxPercent = (dx / width) * 100;
+      const dyPercent = (dy / height) * 100;
+
+      const newElements = elements.map(el => el.id === id ? { ...el, x: el.x + dxPercent, y: el.y + dyPercent } : el);
       updateCurrentState({ elements: newElements });
       pushToHistory({ ...currentState, elements: newElements });
     }
@@ -491,8 +545,13 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
       const dx = moveEvent.clientX - centerX;
       const dy = moveEvent.clientY - centerY;
       const localX = dx * Math.cos(-elementAngle) - dy * Math.sin(-elementAngle);
-      const newWidth = Math.max(50, (Math.abs(localX) * 2) / element.scale);
-      updateElement(id, { width: newWidth }, false);
+      const newWidthPx = Math.max(50, (Math.abs(localX) * 2) / element.scale);
+      
+      const containerRect = containerRef.current!.getBoundingClientRect();
+      const containerWidth = containerRect.width || 1;
+      const newWidthPercent = (newWidthPx / containerWidth) * 100;
+      
+      updateElement(id, { width: newWidthPercent }, false);
     };
 
     const onPointerUp = () => {
@@ -639,6 +698,8 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
           
           ctx.scale(renderScale, renderScale);
           ctx.translate(canvasW / renderScale / 2, canvasH / renderScale / 2);
+
+          ctx.save(); // Save matrix before rotation/flip
           ctx.rotate((state.baseRotation * Math.PI) / 180);
           ctx.scale(state.baseFlipH ? -1 : 1, 1);
 
@@ -652,13 +713,19 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
             -cropW / 2, -cropH / 2, cropW, cropH
           );
 
-          // Draw drawings - Now before restore so they get the same rotation/flip as the image
+          ctx.restore(); // Restore out of base rotation and scaling
+
+          // Screen dimensions in context coordinate space
+          const screenW = canvasW / renderScale;
+          const screenH = canvasH / renderScale;
+
+          // Draw drawings - After restore so they are separate from image rotation/flip
           state.drawings.forEach(path => {
             ctx.save();
             ctx.beginPath();
             ctx.strokeStyle = path.color;
-            // path.size is in units of 100 viewBox. Scale to image width.
-            ctx.lineWidth = (path.size / 100) * img.width;
+            // path.size is in units of 100 viewBox. Scale to screen width.
+            ctx.lineWidth = (path.size / 100) * screenW;
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
             
@@ -679,9 +746,9 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
             }
             
             path.points.forEach((p, idx) => {
-              // p.x, p.y are 0-100 relative to CROPPED image
-              const px = -cropW / 2 + (p.x / 100) * cropW;
-              const py = -cropH / 2 + (p.y / 100) * cropH;
+              // p.x, p.y are 0-100 relative to screen container
+              const px = -screenW / 2 + (p.x / 100) * screenW;
+              const py = -screenH / 2 + (p.y / 100) * screenH;
               
               if (idx === 0) ctx.moveTo(px, py);
               else ctx.lineTo(px, py);
@@ -690,20 +757,40 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
             ctx.restore();
           });
 
-          // Draw Elements (Stickers and Text) - BEFORE restore so they rotate with image
-          const previewWidth = drawingCanvasRef.current?.clientWidth || 1;
-          
-          // scaleFactor maps screen pixels to CROPPED image pixels
-          const scaleFactor = cropW / previewWidth;
+          // Draw Elements (Stickers and Text) - After restore so they are upright to screen
+          const previewWidth = state.previewWidth || 400;
+
+          const getCanvasFontFamily = (fontStr: string) => {
+            switch (fontStr) {
+              case 'Typewriter': return '"Special Elite", cursive';
+              case 'Modern': return '"Righteous", sans-serif';
+              case 'Neon': return '"Monoton", cursive'; 
+              case 'Strong': return '"Playfair Display", serif';
+              case 'Marker': return '"Permanent Marker", cursive';
+              case 'Elegant': return '"Playfair Display", serif';
+              case 'Tech': return '"Orbitron", sans-serif';
+              case 'Comic': return '"Bangers", system-ui';
+              case 'Bangers': return '"Bangers", system-ui';
+              case 'Script': return '"Pacifico", cursive';
+              case 'Lobster': return '"Lobster", cursive';
+              case 'Pixel': return '"Press Start 2P", cursive';
+              case 'Impact': return '"Anton", sans-serif';
+              case 'Cursive': return '"Caveat", cursive';
+              default: return 'Arial, sans-serif';
+            }
+          };
 
           state.elements.forEach(el => {
             ctx.save();
             
-            const finalCx = el.x * scaleFactor;
-            const finalCy = el.y * scaleFactor;
+            const finalCx = (el.x / 100) * screenW;
+            const finalCy = (el.y / 100) * screenH;
             
             ctx.translate(finalCx, finalCy);
             ctx.rotate((el.rotation * Math.PI) / 180);
+            
+            // el.scale is relative. Scale context so 1 unit = 1 screen pixel
+            const scaleFactor = screenW / previewWidth;
             ctx.scale(el.scale * scaleFactor, el.scale * scaleFactor);
 
             if (el.type === 'sticker') {
@@ -712,14 +799,19 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
               ctx.textBaseline = 'middle';
               ctx.fillText(el.content, 0, 0);
             } else if (el.type === 'text' && el.style) {
-              const fontSize = el.style.fontSize;
-              ctx.font = `bold ${fontSize}px Arial`;
-              ctx.textAlign = el.style.alignment;
+              const fontSize = el.style.font === 'Pixel' ? el.style.fontSize * 0.7 : el.style.fontSize;
+              const isItalic = (el.style.font === 'Strong' || el.style.font === 'Marker') ? 'italic ' : '';
+              const isBold = (el.style.font === 'Strong' || el.style.font === 'Elegant' || el.style.font === 'Neon' || el.style.font === 'Modern' || el.style.font === 'Tech' || el.style.font === 'Impact' || el.style.font === 'Pixel') ? 'normal ' : 'bold ';
+              
+              ctx.font = `${isItalic}${isBold}${fontSize}px ${getCanvasFontFamily(el.style.font)}`;
+              ctx.textAlign = el.style.alignment as CanvasTextAlign;
               ctx.textBaseline = 'middle';
               
               const lines = el.content.split('\n');
               const lineHeight = fontSize * 1.2;
-              const maxWidth = el.width ? el.width : Math.max(...lines.map(l => ctx.measureText(l).width)) + 20;
+              // el.width is a percentage of the container width. Convert it to screen pixels.
+              const elWidthPx = el.width ? (el.width / 100) * previewWidth : null;
+              const maxWidth = elWidthPx ? elWidthPx : Math.max(...lines.map(l => ctx.measureText(l.toUpperCase() === l && el.style?.font === 'Modern' ? l.toUpperCase() : l).width)) + 20;
               const totalHeight = lines.length * lineHeight + 10;
               
               if (el.style.background !== 'none') {
@@ -734,13 +826,25 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
                 if (el.style!.alignment === 'left') xOffset = -maxWidth / 2 + 10;
                 else if (el.style!.alignment === 'right') xOffset = maxWidth / 2 - 10;
                 
-                ctx.fillText(line, xOffset, yOffset);
+                let textToDraw = line;
+                if (el.style!.font === 'Modern' || el.style!.font === 'Tech' || el.style!.font === 'Impact') textToDraw = textToDraw.toUpperCase();
+                
+                // Add text shadow / outline if necessary
+                if (el.style!.font === 'Neon') {
+                   ctx.shadowBlur = 10;
+                   ctx.shadowColor = el.style!.color;
+                } else if (el.style!.font === 'Impact') {
+                   ctx.strokeStyle = 'black';
+                   ctx.lineWidth = fontSize * 0.05;
+                   ctx.strokeText(textToDraw, xOffset, yOffset);
+                }
+
+                ctx.fillText(textToDraw, xOffset, yOffset);
               });
             }
             ctx.restore();
           });
 
-          ctx.restore();
           results.push(canvas.toDataURL('image/jpeg', 0.9));
           resolve(null);
         };
@@ -752,7 +856,7 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
     }
     
     setProcessedImages(results);
-    onNext(results);
+    onNext(results, mediaStates);
   };
 
   return (
@@ -886,12 +990,14 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
                   >
                     {currentMedia.type === 'video' ? (
                       <video 
+                        ref={videoRef}
                         src={currentMedia.url} 
                         className="w-full h-full object-cover pointer-events-none select-none" 
                         autoPlay 
                         loop 
-                        muted 
+                        muted={muted}
                         playsInline
+                        onTimeUpdate={handleTimeUpdate}
                         onLoadedMetadata={(e) => {
                           const video = e.currentTarget;
                           const ratio = video.videoWidth / video.videoHeight;
@@ -901,6 +1007,11 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
                               next[currentIndex] = ratio;
                               return next;
                             });
+                          }
+                          // Set initial time based on trim
+                          const duration = video.duration;
+                          if (duration) {
+                            video.currentTime = (trim.start / 100) * duration;
                           }
                         }}
                         style={{ filter: currentFilter }}
@@ -945,7 +1056,8 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
                       points={path.points.map(p => `${p.x},${p.y}`).join(' ')}
                       fill="none"
                       stroke={path.color}
-                      strokeWidth={path.size}
+                      strokeWidth={(path.size / 100) * (drawingCanvasRef.current?.clientWidth || 400)}
+                      vectorEffect="non-scaling-stroke"
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       className="pointer-events-none"
@@ -957,7 +1069,8 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
                       points={currentPath.points.map(p => `${p.x},${p.y}`).join(' ')}
                       fill="none"
                       stroke={currentPath.color}
-                      strokeWidth={currentPath.size}
+                      strokeWidth={(currentPath.size / 100) * (drawingCanvasRef.current?.clientWidth || 400)}
+                      vectorEffect="non-scaling-stroke"
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       className="pointer-events-none"
@@ -1120,36 +1233,68 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
           )}
 
           {isTrimming && currentMedia.type === 'video' && (
-            <div className="px-8 py-6 flex flex-col gap-4 border-b border-zinc-800/50 bg-zinc-900/50">
-              <div className="flex justify-between items-center">
-                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Trim Video</span>
-                <div className="flex gap-2">
-                  <span className="text-[10px] font-bold text-blue-400">{trim.start}%</span>
-                  <span className="text-[10px] font-bold text-zinc-600">-</span>
-                  <span className="text-[10px] font-bold text-blue-400">{trim.end}%</span>
+            <div className="px-8 py-6 flex flex-col gap-6 border-b border-zinc-800/50 bg-zinc-900/50">
+              <div className="flex flex-col gap-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Trim Video</span>
+                  <div className="flex gap-2">
+                    <span className="text-[10px] font-bold text-blue-400">{trim.start}%</span>
+                    <span className="text-[10px] font-bold text-zinc-600">-</span>
+                    <span className="text-[10px] font-bold text-blue-400">{trim.end}%</span>
+                  </div>
+                </div>
+                <div className="relative h-12 bg-zinc-800 rounded-xl overflow-hidden">
+                  <div 
+                    className="absolute inset-y-0 bg-blue-600/30 border-x-4 border-blue-500 z-10 pointer-events-none"
+                    style={{ left: `${trim.start}%`, right: `${100 - trim.end}%` }}
+                  />
+                  <input 
+                    type="range" 
+                    min="0" 
+                    max={trim.end - 1} 
+                    value={trim.start} 
+                    onChange={e => updateCurrentState({ trim: { ...trim, start: parseInt(e.target.value) } })}
+                    className="absolute inset-0 opacity-0 z-20 cursor-pointer"
+                  />
+                  <input 
+                    type="range" 
+                    min={trim.start + 1} 
+                    max="100" 
+                    value={trim.end} 
+                    onChange={e => updateCurrentState({ trim: { ...trim, end: parseInt(e.target.value) } })}
+                    className="absolute inset-0 opacity-0 z-20 cursor-pointer"
+                  />
                 </div>
               </div>
-              <div className="relative h-12 bg-zinc-800 rounded-xl overflow-hidden">
-                <div 
-                  className="absolute inset-y-0 bg-blue-600/30 border-x-4 border-blue-500 z-10"
-                  style={{ left: `${trim.start}%`, right: `${100 - trim.end}%` }}
-                />
-                <input 
-                  type="range" 
-                  min="0" 
-                  max={trim.end - 1} 
-                  value={trim.start} 
-                  onChange={e => updateCurrentState({ trim: { ...trim, start: parseInt(e.target.value) } })}
-                  className="absolute inset-0 opacity-0 z-20 cursor-pointer"
-                />
-                <input 
-                  type="range" 
-                  min={trim.start + 1} 
-                  max="100" 
-                  value={trim.end} 
-                  onChange={e => updateCurrentState({ trim: { ...trim, end: parseInt(e.target.value) } })}
-                  className="absolute inset-0 opacity-0 z-20 cursor-pointer"
-                />
+
+              <div className="flex items-center justify-between gap-6">
+                <div className="flex flex-col gap-2 flex-1">
+                  <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                    <Gauge size={14} /> Speed ({speed}x)
+                  </span>
+                  <div className="flex gap-2">
+                    {[0.5, 1, 1.5, 2].map(s => (
+                      <button
+                        key={s}
+                        onClick={() => updateCurrentState({ speed: s })}
+                        className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors ${speed === s ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
+                      >
+                        {s}x
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                    Audio
+                  </span>
+                  <button
+                    onClick={() => updateCurrentState({ muted: !muted })}
+                    className={`p-3 rounded-xl transition-colors ${muted ? 'bg-red-500/20 text-red-500' : 'bg-zinc-800 text-white hover:bg-zinc-700'}`}
+                  >
+                    {muted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1161,7 +1306,7 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
             <ToolButton icon={<Sparkles size={24} />} label="Filters" active={isFilterDrawerOpen} onClick={() => { const wasOpen = isFilterDrawerOpen; closeAllTools(); setIsFilterDrawerOpen(!wasOpen); }} />
             <ToolButton icon={<Crop size={24} />} label="Crop" active={isCropping} onClick={() => { closeAllTools(); setIsCropping(true); }} />
             {currentMedia.type === 'video' && (
-              <ToolButton icon={<Scissors size={24} />} label="Trim" active={isTrimming} onClick={() => { const wasTrimming = isTrimming; closeAllTools(); setIsTrimming(!wasTrimming); }} />
+              <ToolButton icon={<Scissors size={24} />} label="Video" active={isTrimming} onClick={() => { const wasTrimming = isTrimming; closeAllTools(); setIsTrimming(!wasTrimming); }} />
             )}
             <ToolButton icon={<RotateCw size={24} />} label="Rotate" onClick={() => { closeAllTools(); handleRotateBase(); }} />
             <ToolButton icon={<FlipHorizontal size={24} />} label="Flip" onClick={() => { closeAllTools(); handleFlipBase(); }} />
@@ -1403,9 +1548,16 @@ function EditorElementItem({
           dx = -dx;
         }
 
+        const rect = containerRef.current?.getBoundingClientRect();
+        const width = rect?.width || 1;
+        const height = rect?.height || 1;
+
+        const dxPercent = (dx / width) * 100;
+        const dyPercent = (dy / height) * 100;
+
         if (active) {
-          x.set(el.x + dx);
-          y.set(el.y + dy);
+          x.set(el.x + dxPercent);
+          y.set(el.y + dyPercent);
           onDrag(null, { point: { x: px, y: py }, offset: { x: dx, y: dy } });
         }
         if (last) {
@@ -1443,8 +1595,14 @@ function EditorElementItem({
         opacity: 1,
         zIndex: index + 10
       }}
-      style={{ x, y, touchAction: 'none' }}
-      className={`absolute left-1/2 top-1/2 cursor-grab active:cursor-grabbing group element-container pointer-events-auto ${isActive ? 'ring-2 ring-blue-500 ring-offset-4 ring-offset-transparent rounded-lg' : ''}`}
+      style={{ 
+        left: useTransform(x, v => `calc(50% + ${v}%)`), 
+        top: useTransform(y, v => `calc(50% + ${v}%)`), 
+        x: '-50%',
+        y: '-50%',
+        touchAction: 'none' 
+      }}
+      className={`absolute cursor-grab active:cursor-grabbing group element-container pointer-events-auto ${isActive ? 'ring-2 ring-blue-500 ring-offset-4 ring-offset-transparent rounded-lg' : ''}`}
     >
       <div className="absolute -translate-x-1/2 -translate-y-1/2 flex items-center justify-center">
         {el.type === 'text' && el.style ? (
@@ -1459,8 +1617,8 @@ function EditorElementItem({
             borderRadius: el.style.background !== 'none' ? '12px' : '0',
             textShadow: getTextShadow(el.style),
             WebkitTextStroke: getWebkitTextStroke(el.style),
-            width: el.width ? `${el.width}px` : 'auto',
-            minWidth: el.width ? `${el.width}px` : 'auto',
+            width: el.width ? `${el.width}%` : 'auto',
+            minWidth: el.width ? `${el.width}%` : 'auto',
           }}
         >
           {el.content}

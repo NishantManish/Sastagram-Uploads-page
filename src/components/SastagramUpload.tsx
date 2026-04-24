@@ -11,6 +11,7 @@ export default function SastagramUpload() {
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
   const [postType, setPostType] = useState<'post' | 'story' | 'reel'>('post');
   const [editedImages, setEditedImages] = useState<string[]>([]);
+  const [editorStates, setEditorStates] = useState<any[]>([]);
   const [toast, setToast] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
@@ -56,7 +57,7 @@ export default function SastagramUpload() {
           <MediaEditor 
             mediaItems={mediaItems} 
             postType={postType}
-            onNext={(imgs) => { setEditedImages(imgs); setFlowState('share'); }} 
+            onNext={(imgs, states) => { setEditedImages(imgs); setEditorStates(states); setFlowState('share'); }} 
             onBack={() => {
               setFlowState('select');
               setMediaItems([]);
@@ -80,6 +81,7 @@ export default function SastagramUpload() {
           <ShareScreen 
             images={editedImages} 
             mediaItems={mediaItems}
+            editorStates={editorStates}
             postType={postType}
             onBack={() => setFlowState('edit')} 
             onShare={() => {
@@ -87,6 +89,7 @@ export default function SastagramUpload() {
               setFlowState('select');
               setMediaItems([]);
               setEditedImages([]);
+              setEditorStates([]);
             }} 
             showToast={showToast}
           />

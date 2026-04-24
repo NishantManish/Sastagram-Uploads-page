@@ -1,18 +1,22 @@
 import React, { useState } from 'react';
-import { ChevronLeft, MapPin, Users, Music, Settings, ChevronRight, Share2, Globe, Lock, Users2, Pencil } from 'lucide-react';
+import { ChevronLeft, MapPin, Users, Music, Settings, ChevronRight, Share2, Globe, Lock, Users2, Pencil, Play, Pause, Volume2, VolumeX } from 'lucide-react';
 import { motion } from 'motion/react';
 import { MediaItem } from './MediaSelector';
+
+import { EditorState } from './MediaEditor';
+import { getFontClass, getBgColor, getTextShadow, getWebkitTextStroke } from './TextEditor';
 
 interface ShareScreenProps {
   images: string[];
   mediaItems: MediaItem[];
+  editorStates: EditorState[];
   postType: 'post' | 'story' | 'reel';
   onBack: () => void;
   onShare: () => void;
   showToast: (msg: string) => void;
 }
 
-export default function ShareScreen({ images, mediaItems, postType, onBack, onShare, showToast }: ShareScreenProps) {
+export default function ShareScreen({ images, mediaItems, editorStates, postType, onBack, onShare, showToast }: ShareScreenProps) {
   const [caption, setCaption] = useState('');
   const [visibility, setVisibility] = useState<'public' | 'friends' | 'private'>('public');
   const [currentPreviewIndex, setCurrentPreviewIndex] = useState(0);
@@ -50,7 +54,10 @@ export default function ShareScreen({ images, mediaItems, postType, onBack, onSh
           <div className="space-y-8">
             <div className="relative w-full max-h-[60vh] flex items-center justify-center bg-zinc-900 rounded-[2rem] overflow-hidden shadow-2xl ring-1 ring-white/10 group">
               {mediaItems[currentPreviewIndex].type === 'video' ? (
-                <video src={images[currentPreviewIndex]} className="w-full h-full max-h-[60vh] object-contain" autoPlay loop muted playsInline />
+                <VideoPreview 
+                  url={images[currentPreviewIndex]} 
+                  state={editorStates[currentPreviewIndex]} 
+                />
               ) : (
                 <img src={images[currentPreviewIndex]} alt="Preview" className="w-full h-full max-h-[60vh] object-contain" />
               )}
@@ -144,6 +151,217 @@ function OptionRow({ icon, label, onClick, border = true }: { icon: React.ReactN
       </div>
       <ChevronRight size={18} className="text-zinc-700" />
     </button>
+  );
+}
+
+function VideoPreview({ url, state }: { url: string, state: EditorState }) {
+  const videoRef = React.useRef<HTMLVideoElement>(null);
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const [aspectRatio, setAspectRatio] = React.useState(1);
+  const [containerWidth, setContainerWidth] = React.useState(1);
+  const [isPlaying, setIsPlaying] = React.useState(true);
+  const [isMuted, setIsMuted] = React.useState(state.muted || false);
+
+  React.useEffect(() => {
+    const observer = new ResizeObserver(entries => {
+      if (entries[0]) {
+        setContainerWidth(entries[0].contentRect.width);
+      }
+    });
+    if (containerRef.current) {
+      observer.observe(containerRef.current);
+    }
+    return () => observer.disconnect();
+  }, []);
+
+  React.useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.playbackRate = state.speed || 1;
+      videoRef.current.muted = isMuted;
+    }
+  }, [state.speed, isMuted]);
+
+  const handleTimeUpdate = () => {
+    if (videoRef.current && state.trim) {
+      const duration = videoRef.current.duration;
+      if (!duration) return;
+      const startTime = (state.trim.start / 100) * duration;
+      const endTime = (state.trim.end / 100) * duration;
+      
+      if (videoRef.current.currentTime < startTime || videoRef.current.currentTime > endTime) {
+        videoRef.current.currentTime = startTime;
+      }
+    }
+  };
+
+  const togglePlay = () => {
+    if (videoRef.current) {
+      if (isPlaying) {
+        videoRef.current.pause();
+      } else {
+        videoRef.current.play();
+      }
+      setIsPlaying(!isPlaying);
+    }
+  };
+
+  const toggleMute = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsMuted(!isMuted);
+  };
+
+  const currentAspectRatio = (state.crop.width / state.crop.height) * aspectRatio;
+  const displayAspectRatio = (state.baseRotation === 90 || state.baseRotation === 270) ? 1 / currentAspectRatio : currentAspectRatio;
+  const svgWidth = containerWidth;
+  const scaleFactor = svgWidth / (state.previewWidth || 400);
+
+  return (
+    <div 
+      className="w-full h-full max-h-[60vh] flex items-center justify-center overflow-hidden relative bg-black rounded-[2rem] group/video cursor-pointer"
+      onClick={togglePlay}
+    >
+      <div 
+        ref={containerRef}
+        className="relative overflow-hidden"
+        style={{ 
+          aspectRatio: displayAspectRatio,
+          width: 'auto',
+          height: 'auto',
+          maxHeight: '100%',
+          maxWidth: '100%',
+          objectFit: 'contain'
+        }}
+      >
+        {/* Invisible media to force size and aspect ratio */}
+        <video src={url} className="max-w-full max-h-full opacity-0 pointer-events-none" style={{ maxHeight: '60vh', aspectRatio: displayAspectRatio }} />
+
+        <div 
+          className="absolute inset-0 w-full h-full transition-all duration-300"
+          style={{
+            transform: `rotate(${state.baseRotation}deg) scaleX(${state.baseFlipH ? -1 : 1})`,
+            width: (state.baseRotation === 90 || state.baseRotation === 270) ? `calc(100% * ${currentAspectRatio})` : '100%',
+            height: (state.baseRotation === 90 || state.baseRotation === 270) ? `calc(100% / ${currentAspectRatio})` : '100%',
+            left: '50%',
+            top: '50%',
+            translate: '-50% -50%',
+          }}
+        >
+          <div 
+            className="absolute"
+            style={{
+              width: `${100 / (state.crop.width / 100)}%`,
+              height: `${100 / (state.crop.height / 100)}%`,
+              left: `${-state.crop.x / (state.crop.width / 100)}%`,
+              top: `${-state.crop.y / (state.crop.height / 100)}%`,
+            }}
+          >
+            <video 
+              ref={videoRef}
+              src={url} 
+              className="w-full h-full object-cover pointer-events-none select-none" 
+              autoPlay 
+              loop 
+              muted={isMuted}
+              playsInline
+              onTimeUpdate={handleTimeUpdate}
+              onLoadedMetadata={(e) => {
+                const video = e.currentTarget;
+                const ratio = video.videoWidth / video.videoHeight;
+                if (ratio && isFinite(ratio)) {
+                  setAspectRatio(ratio);
+                }
+                const duration = video.duration;
+                if (duration && state.trim) {
+                  video.currentTime = (state.trim.start / 100) * duration;
+                }
+              }}
+              style={{ filter: state.filter }}
+            />
+          </div>
+        </div>
+
+        {/* Drawings */}
+        <svg 
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+          className="absolute inset-0 z-30 pointer-events-none overflow-visible w-full h-full"
+        >
+          {state.drawings?.map(path => (
+            <polyline
+              key={path.id}
+              points={path.points.map(p => `${p.x},${p.y}`).join(' ')}
+              fill="none"
+              stroke={path.color}
+              strokeWidth={(path.size / 100) * svgWidth}
+              vectorEffect="non-scaling-stroke"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ filter: path.type === 'neon' ? `drop-shadow(0 0 8px ${path.color}) drop-shadow(0 0 2px #fff)` : path.type === 'blur' ? 'blur(2px)' : 'none' }}
+            />
+          ))}
+        </svg>
+
+        {/* Elements */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none z-40">
+          {state.elements?.map(el => (
+            <div
+              key={el.id}
+                className="absolute"
+                style={{
+                  left: `calc(50% + ${el.x}%)`,
+                  top: `calc(50% + ${el.y}%)`,
+                  transform: `translate(-50%, -50%) rotate(${el.rotation}deg) scale(${el.scale * scaleFactor})`,
+                  width: el.width ? `${(el.width / 100) * (state.previewWidth || 400)}px` : 'auto',
+                }}
+              >
+                {el.type === 'text' && el.style ? (
+                  <div 
+                    className={`font-bold ${getFontClass(el.style.font)}`}
+                    style={{
+                      color: el.style.color,
+                      fontSize: `${el.style.fontSize}px`,
+                      textAlign: el.style.alignment,
+                      backgroundColor: getBgColor(el.style),
+                      padding: el.style.background !== 'none' ? '12px 24px' : '0',
+                      borderRadius: el.style.background !== 'none' ? '16px' : '0',
+                      textShadow: getTextShadow(el.style),
+                      WebkitTextStroke: getWebkitTextStroke(el.style),
+                      whiteSpace: 'pre-wrap',
+                      lineHeight: 1.2
+                    }}
+                  >
+                    {el.content}
+                  </div>
+                ) : (
+                  <div className="text-6xl filter drop-shadow-lg">
+                    {el.content}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+      {/* Controls Overlay */}
+      <div className="absolute inset-0 bg-black/0 group-hover/video:bg-black/10 transition-all pointer-events-none" />
+      
+      {/* Play/Pause indicator */}
+      {!isPlaying && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50">
+           <div className="w-16 h-16 bg-black/50 rounded-full flex items-center justify-center backdrop-blur-sm text-white">
+              <Play size={32} className="ml-1" fill="currentColor" />
+           </div>
+        </div>
+      )}
+
+      {/* Mute button */}
+      <button 
+        onClick={toggleMute}
+        className="absolute bottom-4 right-4 w-10 h-10 bg-black/50 rounded-full flex items-center justify-center backdrop-blur-sm text-white hover:bg-black/70 transition-colors opacity-0 group-hover/video:opacity-100 z-50"
+      >
+        {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+      </button>
+    </div>
   );
 }
 

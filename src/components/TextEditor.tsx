@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { AlignLeft, AlignCenter, AlignRight } from 'lucide-react';
 
 export type TextStyle = {
@@ -9,7 +10,7 @@ export type TextStyle = {
   backgroundOpacity?: number;
   alignment: 'left' | 'center' | 'right';
   fontSize: number;
-  effect: 'none' | 'shadow' | 'glow' | 'outline';
+  effect: 'none' | 'shadow' | 'glow' | 'outline' | 'neon' | '3d' | 'pixel' | 'retro';
 };
 
 interface TextEditorProps {
@@ -19,8 +20,26 @@ interface TextEditorProps {
   onCancel: () => void;
 }
 
-const FONTS = ['Classic', 'Typewriter', 'Modern', 'Neon', 'Strong', 'Marker', 'Elegant', 'Tech', 'Comic'];
-const COLORS = ['#FFFFFF', '#000000', '#FF3B30', '#FF9500', '#FFCC00', '#4CD964', '#5AC8FA', '#007AFF', '#5856D6', '#FF2D55'];
+const FONTS = [
+  'Classic', 'Modern', 'Neon', 'Strong', 'Marker', 'Elegant', 'Tech', 'Comic',
+  'Typewriter', 'Bangers', 'Script', 'Lobster', 'Pixel', 'Impact', 'Cursive'
+];
+const COLORS = [
+  '#FFFFFF', '#000000', '#FF3B30', '#FF9500', '#FFCC00', '#4CD964', '#5AC8FA', '#007AFF', '#5856D6', '#FF2D55',
+  '#E91E63', '#9C27B0', '#673AB7', '#3F51B5', '#2196F3', '#03A9F4', '#00BCD4', '#009688', '#4CAF50', '#8BC34A',
+  '#CDDC39', '#FFEB3B', '#FFC107', '#FF9800', '#FF5722', '#795548', '#9E9E9E', '#607D8B'
+];
+
+const EFFECTS: { id: TextStyle['effect'], label: string, icon: string }[] = [
+  { id: 'none', label: 'None', icon: '∅' },
+  { id: 'shadow', label: 'Shadow', icon: 'S' },
+  { id: 'glow', label: 'Glow', icon: 'G' },
+  { id: 'outline', label: 'Outline', icon: 'O' },
+  { id: 'neon', label: 'Neon', icon: 'N' },
+  { id: '3d', label: '3D', icon: '3' },
+  { id: 'pixel', label: 'Pixel', icon: 'P' },
+  { id: 'retro', label: 'Retro', icon: 'R' },
+];
 
 export default function TextEditor({ initialText = '', initialStyle, onDone, onCancel }: TextEditorProps) {
   const [text, setText] = useState(initialText);
@@ -34,6 +53,7 @@ export default function TextEditor({ initialText = '', initialStyle, onDone, onC
     fontSize: 40,
     effect: 'none'
   });
+  const [isEffectPickerOpen, setIsEffectPickerOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -55,9 +75,7 @@ export default function TextEditor({ initialText = '', initialStyle, onDone, onC
   };
 
   const toggleEffect = () => {
-    const effects: ('none' | 'shadow' | 'glow' | 'outline')[] = ['none', 'shadow', 'glow', 'outline'];
-    const nextIdx = (effects.indexOf(style.effect) + 1) % effects.length;
-    setStyle({ ...style, effect: effects[nextIdx] });
+    setIsEffectPickerOpen(!isEffectPickerOpen);
   };
 
   const AlignmentIcon = style.alignment === 'center' ? AlignCenter : style.alignment === 'left' ? AlignLeft : AlignRight;
@@ -67,15 +85,56 @@ export default function TextEditor({ initialText = '', initialStyle, onDone, onC
       {/* Top Bar */}
       <div className="flex items-center justify-between p-4 pt-12">
         <div className="flex gap-4">
-          <button onClick={toggleAlignment} className="w-10 h-10 flex items-center justify-center text-white bg-zinc-800/50 rounded-full">
+          <motion.button 
+            whileTap={{ scale: 0.9 }}
+            onClick={toggleAlignment} 
+            className="w-10 h-10 flex items-center justify-center text-white bg-zinc-800/50 rounded-full"
+          >
             <AlignmentIcon size={20} />
-          </button>
-          <button onClick={toggleEffect} className="w-10 h-10 flex items-center justify-center text-white bg-zinc-800/50 rounded-full font-serif font-bold italic" title="Text Effect">
-            E
-          </button>
-          <button onClick={toggleBackground} className="w-10 h-10 flex items-center justify-center text-white font-serif border-2 border-white rounded-lg px-1 bg-zinc-800/50">
+          </motion.button>
+          <div className="relative">
+            <motion.button 
+              whileTap={{ scale: 0.9 }}
+              onClick={toggleEffect} 
+              className={`w-10 h-10 flex items-center justify-center rounded-full transition-all ${isEffectPickerOpen ? 'bg-white text-black scale-110' : 'text-white bg-zinc-800/50'}`}
+            >
+              <span className="font-serif font-bold italic text-lg">E</span>
+            </motion.button>
+            
+            <AnimatePresence>
+              {isEffectPickerOpen && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10, scale: 0.9 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.9 }}
+                  className="absolute top-full left-0 mt-4 p-2 bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl z-[60] flex flex-col gap-1 min-w-[140px]"
+                >
+                  {EFFECTS.map(eff => (
+                    <motion.button
+                      key={eff.id}
+                      whileHover={{ x: 5 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => {
+                        setStyle({ ...style, effect: eff.id });
+                        setIsEffectPickerOpen(false);
+                      }}
+                      className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-colors ${style.effect === eff.id ? 'bg-white text-black' : 'text-white hover:bg-white/10'}`}
+                    >
+                      <span className="w-6 h-6 flex items-center justify-center bg-zinc-800 rounded-lg text-xs font-bold">{eff.icon}</span>
+                      <span className="text-sm font-semibold">{eff.label}</span>
+                    </motion.button>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+          <motion.button 
+            whileTap={{ scale: 0.9 }}
+            onClick={toggleBackground} 
+            className="w-10 h-10 flex items-center justify-center text-white font-serif border-2 border-white rounded-lg px-1 bg-zinc-800/50"
+          >
             A*
-          </button>
+          </motion.button>
         </div>
         <button onClick={() => onDone(text, style)} className="text-white font-semibold text-lg px-4 py-2 bg-zinc-800/50 rounded-full">
           Done
@@ -156,10 +215,12 @@ export default function TextEditor({ initialText = '', initialStyle, onDone, onC
                 />
               </div>
               {COLORS.map(c => (
-                <button
+                <motion.button
                   key={`bg-${c}`}
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}
                   onClick={() => setStyle({ ...style, backgroundColor: c })}
-                  className={`w-8 h-8 rounded-full flex-shrink-0 border-2 transition-transform ${style.backgroundColor === c ? 'border-white scale-125' : 'border-transparent'}`}
+                  className={`w-8 h-8 rounded-full flex-shrink-0 border-2 transition-all ${style.backgroundColor === c ? 'border-white scale-125 shadow-[0_0_10px_rgba(255,255,255,0.5)]' : 'border-transparent'}`}
                   style={{ backgroundColor: c }}
                 />
               ))}
@@ -171,10 +232,12 @@ export default function TextEditor({ initialText = '', initialStyle, onDone, onC
         <div className="flex gap-4 overflow-x-auto px-6 py-2 no-scrollbar">
           <span className="text-xs font-bold text-white/50 uppercase w-16 shrink-0 flex items-center">Text</span>
           {COLORS.map(c => (
-            <button
+            <motion.button
               key={`text-${c}`}
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.9 }}
               onClick={() => setStyle({ ...style, color: c })}
-              className={`w-8 h-8 rounded-full flex-shrink-0 border-2 transition-transform ${style.color === c ? 'border-white scale-125' : 'border-transparent'}`}
+              className={`w-8 h-8 rounded-full flex-shrink-0 border-2 transition-all ${style.color === c ? 'border-white scale-125 shadow-[0_0_10px_rgba(255,255,255,0.5)]' : 'border-transparent'}`}
               style={{ backgroundColor: c }}
             />
           ))}
@@ -182,13 +245,15 @@ export default function TextEditor({ initialText = '', initialStyle, onDone, onC
         {/* Fonts */}
         <div className="flex gap-4 overflow-x-auto px-6 py-2 no-scrollbar">
           {FONTS.map(f => (
-            <button
+            <motion.button
               key={f}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               onClick={() => setStyle({ ...style, font: f })}
-              className={`w-14 h-14 rounded-full flex items-center justify-center flex-shrink-0 text-white transition-all ${style.font === f ? 'bg-white text-black scale-110' : 'bg-zinc-800'} ${getFontClass(f)}`}
+              className={`px-4 h-12 rounded-full flex items-center justify-center flex-shrink-0 text-white transition-all ${style.font === f ? 'bg-white text-black scale-110 shadow-lg' : 'bg-zinc-800'} ${getFontClass(f)}`}
             >
-              Aa
-            </button>
+              {f}
+            </motion.button>
           ))}
         </div>
       </div>
@@ -198,26 +263,39 @@ export default function TextEditor({ initialText = '', initialStyle, onDone, onC
 
 export function getFontClass(font: string) {
   switch (font) {
-    case 'Typewriter': return 'font-mono font-bold';
-    case 'Modern': return 'font-sans font-black uppercase tracking-wider';
-    case 'Neon': return 'font-cursive text-pink-500'; 
+    case 'Typewriter': return 'font-typewriter';
+    case 'Modern': return 'font-modern uppercase tracking-wider';
+    case 'Neon': return 'font-neon'; 
     case 'Strong': return 'font-serif font-bold italic';
-    case 'Marker': return 'font-sans font-black italic tracking-tighter';
+    case 'Marker': return 'font-marker italic tracking-tighter';
     case 'Elegant': return 'font-serif font-light tracking-widest';
-    case 'Tech': return 'font-mono tracking-widest uppercase';
-    case 'Comic': return 'font-sans font-bold rounded-md';
+    case 'Tech': return 'font-tech tracking-widest uppercase';
+    case 'Comic': return 'font-bangers tracking-wide';
+    case 'Bangers': return 'font-bangers';
+    case 'Script': return 'font-script';
+    case 'Lobster': return 'font-lobster';
+    case 'Pixel': return 'font-pixel text-[0.7em]';
+    case 'Impact': return 'font-impact uppercase';
+    case 'Cursive': return 'font-cursive';
     default: return 'font-sans font-bold';
   }
 }
 
 export function getTextShadow(style: TextStyle) {
-  if (style.effect === 'glow' || style.font === 'Neon') return `0 0 10px ${style.color}, 0 0 20px ${style.color}`;
-  if (style.effect === 'shadow') return '0 4px 12px rgba(0,0,0,0.8)';
-  return 'none';
+  const color = style.color;
+  switch (style.effect) {
+    case 'glow': return `0 0 10px ${color}, 0 0 20px ${color}`;
+    case 'neon': return `0 0 5px #fff, 0 0 10px #fff, 0 0 20px ${color}, 0 0 30px ${color}, 0 0 40px ${color}`;
+    case 'shadow': return '4px 4px 0px rgba(0,0,0,0.5)';
+    case '3d': return `1px 1px 0px #ccc, 2px 2px 0px #bbb, 3px 3px 0px #aaa, 4px 4px 0px rgba(0,0,0,0.5)`;
+    case 'pixel': return `2px 2px 0px #000`;
+    case 'retro': return `2px 2px 0px #ff00ff, -2px -2px 0px #00ffff`;
+    default: return style.font === 'Neon' ? `0 0 10px ${color}, 0 0 20px ${color}` : 'none';
+  }
 }
 
 export function getWebkitTextStroke(style: TextStyle) {
-  if (style.effect === 'outline') return `1.5px ${style.background === 'solid' ? '#fff' : '#000'}`;
+  if (style.effect === 'outline') return `2px ${style.background === 'solid' ? '#fff' : '#000'}`;
   return 'none';
 }
 
