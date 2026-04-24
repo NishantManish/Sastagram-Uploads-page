@@ -250,9 +250,10 @@ export default function TextEditor({ initialText = '', initialStyle, onDone, onC
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={() => setStyle({ ...style, font: f })}
-              className={`px-4 h-12 rounded-full flex items-center justify-center flex-shrink-0 text-white transition-all ${style.font === f ? 'bg-white text-black scale-110 shadow-lg' : 'bg-zinc-800'} ${getFontClass(f)}`}
+              className={`px-4 h-12 rounded-full flex items-center justify-center flex-shrink-0 text-white transition-all border border-transparent ${style.font === f ? 'bg-white text-black scale-110 shadow-lg !border-white' : 'bg-zinc-900 border-white/10 hover:bg-zinc-800'}`}
             >
-              {f}
+              <span className={`text-xl leading-none ${getFontClass(f)}`}>Aa</span>
+              <span className="text-[10px] uppercase font-bold opacity-60 ml-3 tracking-widest font-sans">{f}</span>
             </motion.button>
           ))}
         </div>

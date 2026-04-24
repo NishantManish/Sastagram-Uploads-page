@@ -53,14 +53,10 @@ export default function ShareScreen({ images, mediaItems, editorStates, postType
           {/* Left Column: Preview & Caption */}
           <div className="space-y-8">
             <div className="relative w-full max-h-[60vh] flex items-center justify-center bg-zinc-900 rounded-[2rem] overflow-hidden shadow-2xl ring-1 ring-white/10 group">
-              {mediaItems[currentPreviewIndex].type === 'video' ? (
-                <VideoPreview 
-                  url={images[currentPreviewIndex]} 
-                  state={editorStates[currentPreviewIndex]} 
-                />
-              ) : (
-                <img src={images[currentPreviewIndex]} alt="Preview" className="w-full h-full max-h-[60vh] object-contain" />
-              )}
+              <MediaPreview 
+                item={mediaItems[currentPreviewIndex]} 
+                state={editorStates[currentPreviewIndex]} 
+              />
               
               {images.length > 1 && (
                 <>
@@ -154,7 +150,7 @@ function OptionRow({ icon, label, onClick, border = true }: { icon: React.ReactN
   );
 }
 
-function VideoPreview({ url, state }: { url: string, state: EditorState }) {
+function MediaPreview({ item, state }: { item: MediaItem, state: EditorState }) {
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [aspectRatio, setAspectRatio] = React.useState(1);
@@ -175,14 +171,14 @@ function VideoPreview({ url, state }: { url: string, state: EditorState }) {
   }, []);
 
   React.useEffect(() => {
-    if (videoRef.current) {
+    if (videoRef.current && item.type === 'video') {
       videoRef.current.playbackRate = state.speed || 1;
       videoRef.current.muted = isMuted;
     }
-  }, [state.speed, isMuted]);
+  }, [state.speed, isMuted, item.type]);
 
   const handleTimeUpdate = () => {
-    if (videoRef.current && state.trim) {
+    if (videoRef.current && state.trim && item.type === 'video') {
       const duration = videoRef.current.duration;
       if (!duration) return;
       const startTime = (state.trim.start / 100) * duration;
@@ -195,7 +191,7 @@ function VideoPreview({ url, state }: { url: string, state: EditorState }) {
   };
 
   const togglePlay = () => {
-    if (videoRef.current) {
+    if (videoRef.current && item.type === 'video') {
       if (isPlaying) {
         videoRef.current.pause();
       } else {
@@ -213,12 +209,12 @@ function VideoPreview({ url, state }: { url: string, state: EditorState }) {
   const currentAspectRatio = (state.crop.width / state.crop.height) * aspectRatio;
   const displayAspectRatio = (state.baseRotation === 90 || state.baseRotation === 270) ? 1 / currentAspectRatio : currentAspectRatio;
   const svgWidth = containerWidth;
-  const scaleFactor = svgWidth / (state.previewWidth || 400);
+  const scaleFactor = svgWidth > 1 ? svgWidth / (state.previewWidth || 400) : 1;
 
   return (
     <div 
-      className="w-full h-full max-h-[60vh] flex items-center justify-center overflow-hidden relative bg-black rounded-[2rem] group/video cursor-pointer"
-      onClick={togglePlay}
+      className={`w-full h-full max-h-[60vh] flex items-center justify-center overflow-hidden relative bg-black rounded-[2rem] ${item.type === 'video' ? 'group/video cursor-pointer' : ''}`}
+      onClick={item.type === 'video' ? togglePlay : undefined}
     >
       <div 
         ref={containerRef}
@@ -233,7 +229,11 @@ function VideoPreview({ url, state }: { url: string, state: EditorState }) {
         }}
       >
         {/* Invisible media to force size and aspect ratio */}
-        <video src={url} className="max-w-full max-h-full opacity-0 pointer-events-none" style={{ maxHeight: '60vh', aspectRatio: displayAspectRatio }} />
+        {item.type === 'video' ? (
+          <video src={item.url} className="max-w-full max-h-full opacity-0 pointer-events-none" style={{ maxHeight: '60vh', aspectRatio: displayAspectRatio }} />
+        ) : (
+          <img src={item.url} className="max-w-full max-h-full opacity-0 pointer-events-none" style={{ maxHeight: '60vh', aspectRatio: displayAspectRatio }} />
+        )}
 
         <div 
           className="absolute inset-0 w-full h-full transition-all duration-300"
@@ -255,112 +255,116 @@ function VideoPreview({ url, state }: { url: string, state: EditorState }) {
               top: `${-state.crop.y / (state.crop.height / 100)}%`,
             }}
           >
-            <video 
-              ref={videoRef}
-              src={url} 
-              className="w-full h-full object-cover pointer-events-none select-none" 
-              autoPlay 
-              loop 
-              muted={isMuted}
-              playsInline
-              onTimeUpdate={handleTimeUpdate}
-              onLoadedMetadata={(e) => {
-                const video = e.currentTarget;
-                const ratio = video.videoWidth / video.videoHeight;
-                if (ratio && isFinite(ratio)) {
-                  setAspectRatio(ratio);
-                }
-                const duration = video.duration;
-                if (duration && state.trim) {
-                  video.currentTime = (state.trim.start / 100) * duration;
-                }
-              }}
-              style={{ filter: state.filter }}
-            />
+            {item.type === 'video' ? (
+              <video 
+                ref={videoRef}
+                src={item.url} 
+                className="w-full h-full object-cover pointer-events-none select-none" 
+                autoPlay 
+                loop 
+                muted={isMuted}
+                playsInline
+                onTimeUpdate={handleTimeUpdate}
+                onLoadedMetadata={(e) => {
+                  const video = e.currentTarget;
+                  const ratio = video.videoWidth / video.videoHeight;
+                  if (ratio && isFinite(ratio)) {
+                    setAspectRatio(ratio);
+                  }
+                  const duration = video.duration;
+                  if (duration && state.trim) {
+                    video.currentTime = (state.trim.start / 100) * duration;
+                  }
+                }}
+                style={{ filter: state.filter }}
+              />
+            ) : (
+              <img 
+                src={item.url} 
+                className="w-full h-full object-cover pointer-events-none select-none" 
+                onLoad={(e) => {
+                  const img = e.currentTarget;
+                  const ratio = img.naturalWidth / img.naturalHeight;
+                  if (ratio && isFinite(ratio)) {
+                    setAspectRatio(ratio);
+                  }
+                }}
+                style={{ filter: state.filter }}
+              />
+            )}
           </div>
-        </div>
 
-        {/* Drawings */}
-        <svg 
-          viewBox="0 0 100 100"
-          preserveAspectRatio="none"
-          className="absolute inset-0 z-30 pointer-events-none overflow-visible w-full h-full"
-        >
-          {state.drawings?.map(path => (
-            <polyline
-              key={path.id}
-              points={path.points.map(p => `${p.x},${p.y}`).join(' ')}
-              fill="none"
-              stroke={path.color}
-              strokeWidth={(path.size / 100) * svgWidth}
-              vectorEffect="non-scaling-stroke"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              style={{ filter: path.type === 'neon' ? `drop-shadow(0 0 8px ${path.color}) drop-shadow(0 0 2px #fff)` : path.type === 'blur' ? 'blur(2px)' : 'none' }}
-            />
-          ))}
-        </svg>
-
-        {/* Elements */}
-        <div className="absolute inset-0 overflow-hidden pointer-events-none z-40">
-          {state.elements?.map(el => (
-            <div
-              key={el.id}
+          {/* Elements Layer Moved Inside */}
+          <div className="absolute inset-0 overflow-hidden pointer-events-none z-40">
+            {state.elements?.map(el => (
+              <div
+                key={el.id}
                 className="absolute"
                 style={{
                   left: `calc(50% + ${el.x}%)`,
                   top: `calc(50% + ${el.y}%)`,
-                  transform: `translate(-50%, -50%) rotate(${el.rotation}deg) scale(${el.scale * scaleFactor})`,
-                  width: el.width ? `${(el.width / 100) * (state.previewWidth || 400)}px` : 'auto',
                 }}
               >
-                {el.type === 'text' && el.style ? (
-                  <div 
-                    className={`font-bold ${getFontClass(el.style.font)}`}
-                    style={{
-                      color: el.style.color,
-                      fontSize: `${el.style.fontSize}px`,
-                      textAlign: el.style.alignment,
-                      backgroundColor: getBgColor(el.style),
-                      padding: el.style.background !== 'none' ? '12px 24px' : '0',
-                      borderRadius: el.style.background !== 'none' ? '16px' : '0',
-                      textShadow: getTextShadow(el.style),
-                      WebkitTextStroke: getWebkitTextStroke(el.style),
-                      whiteSpace: 'pre-wrap',
-                      lineHeight: 1.2
-                    }}
-                  >
-                    {el.content}
-                  </div>
-                ) : (
-                  <div className="text-6xl filter drop-shadow-lg">
-                    {el.content}
-                  </div>
-                )}
+                <div style={{
+                  transform: `translate(-50%, -50%) rotate(${el.rotation}deg) scale(${el.scale * scaleFactor})`,
+                  width: el.width ? `${(el.width / 100) * (state.previewWidth || 400)}px` : 'max-content',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  {el.type === 'text' && el.style ? (
+                    <div 
+                      className={`font-bold whitespace-pre-wrap select-none ${getFontClass(el.style.font)}`}
+                      style={{
+                        color: el.style.color,
+                        fontSize: `${el.style.fontSize}px`,
+                        textAlign: el.style.alignment,
+                        backgroundColor: getBgColor(el.style),
+                        padding: el.style.background !== 'none' ? '8px 16px' : '0',
+                        borderRadius: el.style.background !== 'none' ? '12px' : '0',
+                        textShadow: getTextShadow(el.style),
+                        WebkitTextStroke: getWebkitTextStroke(el.style),
+                        lineHeight: 1.2,
+                        width: '100%'
+                      }}
+                    >
+                      {el.content}
+                    </div>
+                  ) : (
+                    <div className="text-7xl drop-shadow-2xl select-none pointer-events-none" style={{ color: 'white' }}>
+                      {el.content}
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
           </div>
         </div>
+      </div>
 
       {/* Controls Overlay */}
-      <div className="absolute inset-0 bg-black/0 group-hover/video:bg-black/10 transition-all pointer-events-none" />
-      
-      {/* Play/Pause indicator */}
-      {!isPlaying && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50">
-           <div className="w-16 h-16 bg-black/50 rounded-full flex items-center justify-center backdrop-blur-sm text-white">
-              <Play size={32} className="ml-1" fill="currentColor" />
-           </div>
-        </div>
-      )}
+      {item.type === 'video' && (
+        <>
+          <div className="absolute inset-0 bg-black/0 group-hover/video:bg-black/10 transition-all pointer-events-none" />
+          
+          {/* Play/Pause indicator */}
+          {!isPlaying && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50">
+               <div className="w-16 h-16 bg-black/50 rounded-full flex items-center justify-center backdrop-blur-sm text-white">
+                  <Play size={32} className="ml-1" fill="currentColor" />
+               </div>
+            </div>
+          )}
 
-      {/* Mute button */}
-      <button 
-        onClick={toggleMute}
-        className="absolute bottom-4 right-4 w-10 h-10 bg-black/50 rounded-full flex items-center justify-center backdrop-blur-sm text-white hover:bg-black/70 transition-colors opacity-0 group-hover/video:opacity-100 z-50"
-      >
-        {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
-      </button>
+          {/* Mute button */}
+          <button 
+            onClick={toggleMute}
+            className="absolute bottom-4 right-4 w-10 h-10 bg-black/50 rounded-full flex items-center justify-center backdrop-blur-sm text-white hover:bg-black/70 transition-colors opacity-0 group-hover/video:opacity-100 z-50"
+          >
+            {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+          </button>
+        </>
+      )}
     </div>
   );
 }

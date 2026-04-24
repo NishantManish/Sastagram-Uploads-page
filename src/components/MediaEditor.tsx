@@ -17,14 +17,6 @@ export type EditorElement = {
   width?: number;
 };
 
-export type DrawingPath = {
-  id: string;
-  points: { x: number; y: number }[];
-  color: string;
-  size: number;
-  type: 'brush' | 'neon' | 'blur';
-};
-
 export type EditorState = {
   elements: EditorElement[];
   filter: string;
@@ -40,7 +32,6 @@ export type EditorState = {
   trim: { start: number; end: number };
   speed: number;
   muted: boolean;
-  drawings: DrawingPath[];
   previewWidth?: number;
 };
 
@@ -101,8 +92,7 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
     crop: { x: 0, y: 0, width: 100, height: 100, aspectRatio: 'original' },
     trim: { start: 0, end: 100 },
     speed: 1,
-    muted: false,
-    drawings: []
+    muted: false
   })));
 
   const [history, setHistory] = useState<EditorState[][]>(mediaItems.map(() => ([{ 
@@ -113,8 +103,7 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
     crop: { x: 0, y: 0, width: 100, height: 100, aspectRatio: 'original' },
     trim: { start: 0, end: 100 },
     speed: 1,
-    muted: false,
-    drawings: []
+    muted: false
   }])));
   const [historyIndices, setHistoryIndices] = useState<number[]>(mediaItems.map(() => 0));
 
@@ -126,8 +115,7 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
     crop: { x: 0, y: 0, width: 100, height: 100, aspectRatio: 'original' },
     trim: { start: 0, end: 100 },
     speed: 1,
-    muted: false,
-    drawings: []
+    muted: false
   };
   const elements = currentState.elements;
   const currentFilter = currentState.filter;
@@ -137,19 +125,13 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
   const trim = currentState.trim;
   const speed = currentState.speed;
   const muted = currentState.muted;
-  const drawings = currentState.drawings;
 
   const historyIndex = historyIndices[currentIndex] || 0;
   const currentHistory = history[currentIndex] || [currentState];
 
   const [isEditingText, setIsEditingText] = useState(false);
   const [isCropping, setIsCropping] = useState(false);
-  const [isDrawing, setIsDrawing] = useState(false);
   const [isTrimming, setIsTrimming] = useState(false);
-  const [brushColor, setBrushColor] = useState('#ffffff');
-  const [brushSize, setBrushSize] = useState(5);
-  const [brushType, setBrushType] = useState<'brush' | 'neon' | 'blur'>('brush');
-  const [currentPath, setCurrentPath] = useState<DrawingPath | null>(null);
 
   const [editingElementId, setEditingElementId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -161,7 +143,6 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
   const [activeElementId, setActiveElementId] = useState<string | null>(null);
   
   const closeAllTools = () => {
-    setIsDrawing(false);
     setIsCropping(false);
     setIsTrimming(false);
     setIsStickerDrawerOpen(false);
@@ -171,7 +152,6 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
   };
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const drawingCanvasRef = useRef<SVGSVGElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -183,8 +163,8 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
 
   useEffect(() => {
     const updatePreviewWidth = () => {
-      if (drawingCanvasRef.current) {
-        const width = drawingCanvasRef.current.clientWidth;
+      if (containerRef.current) {
+        const width = containerRef.current.clientWidth;
         if (width > 0 && currentState.previewWidth !== width) {
           updateCurrentState({ previewWidth: width });
         }
@@ -211,6 +191,7 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
 
   const updateCurrentState = (updates: Partial<EditorState>) => {
     setMediaStates(prev => {
+      if (!prev[currentIndex]) return prev;
       const next = [...prev];
       next[currentIndex] = { ...next[currentIndex], ...updates };
       return next;
@@ -219,16 +200,18 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
 
   const pushToHistory = (newState: EditorState) => {
     setHistory(prev => {
+      if (!prev[currentIndex]) return prev;
       const next = [...prev];
-      const itemHistory = next[currentIndex].slice(0, historyIndices[currentIndex] + 1);
+      const itemHistory = next[currentIndex].slice(0, (historyIndices[currentIndex] ?? 0) + 1);
       itemHistory.push(JSON.parse(JSON.stringify(newState)));
       if (itemHistory.length > 30) itemHistory.shift();
       next[currentIndex] = itemHistory;
-      return next;
-    });
-    setHistoryIndices(prev => {
-      const next = [...prev];
-      next[currentIndex] = Math.min(29, history[currentIndex].slice(0, historyIndices[currentIndex] + 1).length);
+      
+      setHistoryIndices(idxPrev => {
+        const idxNext = [...idxPrev];
+        idxNext[currentIndex] = itemHistory.length - 1;
+        return idxNext;
+      });
       return next;
     });
   };
@@ -281,58 +264,6 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
     setIsCropping(false);
     pushToHistory(newState);
     showToast('Crop Applied');
-  };
-
-  const handleDrawingStart = (e: React.PointerEvent) => {
-    if (!isDrawing) return;
-    
-    e.currentTarget.setPointerCapture(e.pointerId);
-    
-    const svg = e.currentTarget as SVGSVGElement;
-    const pt = svg.createSVGPoint();
-    pt.x = e.clientX;
-    pt.y = e.clientY;
-    const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse());
-    const x = svgP.x;
-    const y = svgP.y;
-    
-    const newPath: DrawingPath = {
-      id: Date.now().toString(),
-      points: [{ x, y }],
-      color: brushColor,
-      size: brushSize,
-      type: brushType
-    };
-    setCurrentPath(newPath);
-  };
-
-  const handleDrawingMove = (e: React.PointerEvent) => {
-    if (!isDrawing || !currentPath) return;
-    
-    const svg = e.currentTarget as SVGSVGElement;
-    const pt = svg.createSVGPoint();
-    pt.x = e.clientX;
-    pt.y = e.clientY;
-    const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse());
-    const x = svgP.x;
-    const y = svgP.y;
-    
-    setCurrentPath(prev => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        points: [...prev.points, { x, y }]
-      };
-    });
-  };
-
-  const handleDrawingEnd = () => {
-    if (!isDrawing || !currentPath) return;
-    const newDrawings = [...drawings, currentPath];
-    const newState = { ...currentState, drawings: newDrawings };
-    updateCurrentState({ drawings: newDrawings });
-    pushToHistory(newState);
-    setCurrentPath(null);
   };
 
   const handleAddText = () => {
@@ -473,6 +404,7 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
     
     const startAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX);
     const startRotation = element.rotation;
+    let finalRotation = startRotation;
 
     const onPointerMove = (moveEvent: PointerEvent) => {
       const currentAngle = Math.atan2(moveEvent.clientY - centerY, moveEvent.clientX - centerX);
@@ -487,14 +419,15 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
         }
       }
 
+      finalRotation = newRotation;
       updateElement(id, { rotation: newRotation }, false);
     };
 
     const onPointerUp = () => {
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
-      const finalElements = elements.map(el => el.id === id ? { ...el } : el);
-      pushToHistory(finalElements);
+      const finalElements = elements.map(el => el.id === id ? { ...el, rotation: finalRotation } : el);
+      pushToHistory({ ...currentState, elements: finalElements });
     };
 
     window.addEventListener('pointermove', onPointerMove);
@@ -512,19 +445,21 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
     
     const startDist = Math.hypot(e.clientX - centerX, e.clientY - centerY);
     const startScale = element.scale;
+    let finalScale = startScale;
 
     const onPointerMove = (moveEvent: PointerEvent) => {
       const currentDist = Math.hypot(moveEvent.clientY - centerY, moveEvent.clientX - centerX);
       const scaleRatio = currentDist / startDist;
       const newScale = Math.max(0.2, startScale * scaleRatio);
+      finalScale = newScale;
       updateElement(id, { scale: newScale }, false);
     };
 
     const onPointerUp = () => {
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
-      const finalElements = elements.map(el => el.id === id ? { ...el } : el);
-      pushToHistory(finalElements);
+      const finalElements = elements.map(el => el.id === id ? { ...el, scale: finalScale } : el);
+      pushToHistory({ ...currentState, elements: finalElements });
     };
 
     window.addEventListener('pointermove', onPointerMove);
@@ -537,28 +472,33 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
     if (!element || !containerRef.current) return;
 
     const rect = (e.currentTarget as HTMLElement).closest('.element-container')!.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const containerWidth = containerRect.width || 1;
     const elementAngle = element.rotation * Math.PI / 180;
+    
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startWidthPercent = element.width || ((rect.width / element.scale) / containerWidth) * 100;
+
+    let finalWidthPercent = startWidthPercent;
 
     const onPointerMove = (moveEvent: PointerEvent) => {
-      const dx = moveEvent.clientX - centerX;
-      const dy = moveEvent.clientY - centerY;
-      const localX = dx * Math.cos(-elementAngle) - dy * Math.sin(-elementAngle);
-      const newWidthPx = Math.max(50, (Math.abs(localX) * 2) / element.scale);
+      const dx = moveEvent.clientX - startX;
+      const dy = moveEvent.clientY - startY;
+      const localDx = dx * Math.cos(-elementAngle) - dy * Math.sin(-elementAngle);
       
-      const containerRect = containerRef.current!.getBoundingClientRect();
-      const containerWidth = containerRect.width || 1;
-      const newWidthPercent = (newWidthPx / containerWidth) * 100;
+      const dxPercent = ((localDx * 2) / element.scale) / containerWidth * 100;
+      const newWidthPercent = Math.max(10, startWidthPercent + dxPercent);
       
+      finalWidthPercent = newWidthPercent;
       updateElement(id, { width: newWidthPercent }, false);
     };
 
     const onPointerUp = () => {
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
-      const finalElements = elements.map(el => el.id === id ? { ...el } : el);
-      pushToHistory(finalElements);
+      const finalElements = elements.map(el => el.id === id ? { ...el, width: finalWidthPercent } : el);
+      pushToHistory({ ...currentState, elements: finalElements });
     };
 
     window.addEventListener('pointermove', onPointerMove);
@@ -656,17 +596,17 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
 
       await new Promise((resolve) => {
         img.onload = () => {
-          const ctx = canvas.getContext('2d');
+          const ctx = canvas.getContext('2d', { alpha: false });
           if (!ctx) {
             results.push(item.url);
             resolve(null);
             return;
           }
 
-          const cropW = (state.crop.width / 100) * img.width;
-          const cropH = (state.crop.height / 100) * img.height;
-          const cropX = (state.crop.x / 100) * img.width;
-          const cropY = (state.crop.y / 100) * img.height;
+          const cropW = Math.max(1, (state.crop.width / 100) * img.width);
+          const cropH = Math.max(1, (state.crop.height / 100) * img.height);
+          const cropX = Math.max(0, (state.crop.x / 100) * img.width);
+          const cropY = Math.max(0, (state.crop.y / 100) * img.height);
 
           const isRotated = state.baseRotation === 90 || state.baseRotation === 270;
           
@@ -691,7 +631,9 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
           canvas.width = canvasW;
           canvas.height = canvasH;
 
-          ctx.clearRect(0, 0, canvasW, canvasH);
+          ctx.fillStyle = '#000000';
+          ctx.fillRect(0, 0, canvasW, canvasH);
+          
           ctx.save();
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'high';
@@ -718,44 +660,6 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
           // Screen dimensions in context coordinate space
           const screenW = canvasW / renderScale;
           const screenH = canvasH / renderScale;
-
-          // Draw drawings - After restore so they are separate from image rotation/flip
-          state.drawings.forEach(path => {
-            ctx.save();
-            ctx.beginPath();
-            ctx.strokeStyle = path.color;
-            // path.size is in units of 100 viewBox. Scale to screen width.
-            ctx.lineWidth = (path.size / 100) * screenW;
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
-            
-            if (path.type === 'neon') {
-              ctx.shadowBlur = 30;
-              ctx.shadowColor = path.color;
-              ctx.filter = 'none';
-              ctx.globalAlpha = 1;
-            } else if (path.type === 'blur') {
-              ctx.shadowBlur = 15;
-              ctx.shadowColor = path.color;
-              ctx.filter = 'blur(4px)';
-              ctx.globalAlpha = 0.6;
-            } else {
-              ctx.shadowBlur = 0;
-              ctx.filter = 'none';
-              ctx.globalAlpha = 1;
-            }
-            
-            path.points.forEach((p, idx) => {
-              // p.x, p.y are 0-100 relative to screen container
-              const px = -screenW / 2 + (p.x / 100) * screenW;
-              const py = -screenH / 2 + (p.y / 100) * screenH;
-              
-              if (idx === 0) ctx.moveTo(px, py);
-              else ctx.lineTo(px, py);
-            });
-            ctx.stroke();
-            ctx.restore();
-          });
 
           // Draw Elements (Stickers and Text) - After restore so they are upright to screen
           const previewWidth = state.previewWidth || 400;
@@ -794,9 +698,10 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
             ctx.scale(el.scale * scaleFactor, el.scale * scaleFactor);
 
             if (el.type === 'sticker') {
-              ctx.font = '80px Arial';
+              ctx.font = '80px Arial, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol"';
               ctx.textAlign = 'center';
               ctx.textBaseline = 'middle';
+              ctx.fillStyle = '#FFFFFF';
               ctx.fillText(el.content, 0, 0);
             } else if (el.type === 'text' && el.style) {
               const fontSize = el.style.font === 'Pixel' ? el.style.fontSize * 0.7 : el.style.fontSize;
@@ -902,8 +807,8 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
             </button>
             <button 
               onClick={redo} 
-              disabled={historyIndex === history.length - 1}
-              className={`p-2 rounded-full transition-colors ${historyIndex === history.length - 1 ? 'text-zinc-600' : 'hover:bg-zinc-800 text-white'}`}
+              disabled={historyIndex === currentHistory.length - 1}
+              className={`p-2 rounded-full transition-colors ${historyIndex === currentHistory.length - 1 ? 'text-zinc-600' : 'hover:bg-zinc-800 text-white'}`}
             >
               <Redo size={20} />
             </button>
@@ -941,13 +846,14 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
           }}
         >
           {(() => {
-            const currentAspectRatio = (crop.width / crop.height) * (mediaAspectRatios[currentIndex] || 1);
+            const ar = mediaAspectRatios[currentIndex] || 1;
+            const currentAspectRatio = Math.max(0.1, Math.min(10, (crop.width / crop.height) * ar));
             const displayAspectRatio = (baseRotation === 90 || baseRotation === 270) ? 1 / currentAspectRatio : currentAspectRatio;
             return (
               <div 
                 className="relative bg-zinc-900 rounded-[2rem] overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.5)] ring-1 ring-white/10"
                 style={{ 
-                  aspectRatio: displayAspectRatio,
+                  aspectRatio: isFinite(displayAspectRatio) ? displayAspectRatio : 1,
                   maxWidth: '100%',
                   maxHeight: '100%',
                   width: 'auto',
@@ -1038,50 +944,9 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
                   </div>
 
 
-                {/* Drawing Layer */}
-                <svg 
-                  ref={drawingCanvasRef}
-                  viewBox="0 0 100 100"
-                  preserveAspectRatio="none"
-                  className={`absolute inset-0 z-30 pointer-events-auto overflow-visible ${isDrawing ? 'cursor-crosshair' : 'pointer-events-none'}`}
-                  style={{ touchAction: 'none' }}
-                  onPointerDown={handleDrawingStart}
-                  onPointerMove={handleDrawingMove}
-                  onPointerUp={handleDrawingEnd}
-                  onPointerLeave={handleDrawingEnd}
-                >
-                  {drawings.map(path => (
-                    <polyline
-                      key={path.id}
-                      points={path.points.map(p => `${p.x},${p.y}`).join(' ')}
-                      fill="none"
-                      stroke={path.color}
-                      strokeWidth={(path.size / 100) * (drawingCanvasRef.current?.clientWidth || 400)}
-                      vectorEffect="non-scaling-stroke"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className="pointer-events-none"
-                      style={{ filter: path.type === 'neon' ? `drop-shadow(0 0 8px ${path.color}) drop-shadow(0 0 2px #fff)` : path.type === 'blur' ? 'blur(2px)' : 'none' }}
-                    />
-                  ))}
-                  {currentPath && (
-                    <polyline
-                      points={currentPath.points.map(p => `${p.x},${p.y}`).join(' ')}
-                      fill="none"
-                      stroke={currentPath.color}
-                      strokeWidth={(currentPath.size / 100) * (drawingCanvasRef.current?.clientWidth || 400)}
-                      vectorEffect="non-scaling-stroke"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className="pointer-events-none"
-                      style={{ filter: currentPath.type === 'neon' ? `drop-shadow(0 0 8px ${currentPath.color}) drop-shadow(0 0 2px #fff)` : currentPath.type === 'blur' ? 'blur(2px)' : 'none' }}
-                    />
-                  )}
-                </svg>
-
                 {/* Elements Layer */}
                 <div 
-                  className={`absolute inset-0 overflow-hidden pointer-events-auto ${isDrawing ? 'z-20' : 'z-40'}`}
+                  className="absolute inset-0 overflow-hidden pointer-events-auto z-40"
                   onPointerDown={(e) => {
                     if (e.target === e.currentTarget) {
                       setActiveElementId(null);
@@ -1183,55 +1048,6 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
 
       {/* Bottom Tools & Actions */}
         <div className="flex flex-col bg-zinc-950 z-40 border-t border-zinc-800/50">
-          {isDrawing && (
-            <div className="px-6 py-4 flex items-center gap-6 border-b border-zinc-800/50 bg-zinc-900/50 overflow-x-auto no-scrollbar">
-              <div className="flex gap-2">
-                {['#ffffff', '#000000', '#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff'].map(c => (
-                  <button 
-                    key={c}
-                    onClick={() => setBrushColor(c)}
-                    className={`w-8 h-8 rounded-full border-2 transition-transform ${brushColor === c ? 'scale-125 border-white' : 'border-transparent'}`}
-                    style={{ backgroundColor: c }}
-                  />
-                ))}
-              </div>
-              <div className="h-8 w-[1px] bg-zinc-800" />
-              <div className="flex gap-4 items-center">
-                <input 
-                  type="range" 
-                  min="1" 
-                  max="20" 
-                  value={brushSize} 
-                  onChange={e => setBrushSize(parseInt(e.target.value))}
-                  className="w-32 accent-blue-500"
-                />
-                <span className="text-[10px] font-bold text-zinc-500 w-4">{brushSize}</span>
-              </div>
-              <div className="h-8 w-[1px] bg-zinc-800" />
-              <div className="flex gap-2">
-                {(['brush', 'neon', 'blur'] as const).map(t => (
-                  <button 
-                    key={t}
-                    onClick={() => setBrushType(t)}
-                    className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest transition-colors ${brushType === t ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-500'}`}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
-              <button 
-                onClick={() => {
-                  const newDrawings = drawings.slice(0, -1);
-                  updateCurrentState({ drawings: newDrawings });
-                  pushToHistory({ ...currentState, drawings: newDrawings });
-                }}
-                className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400"
-              >
-                <RotateCcw size={18} />
-              </button>
-            </div>
-          )}
-
           {isTrimming && currentMedia.type === 'video' && (
             <div className="px-8 py-6 flex flex-col gap-6 border-b border-zinc-800/50 bg-zinc-900/50">
               <div className="flex flex-col gap-4">
@@ -1302,7 +1118,6 @@ export default function MediaEditor({ mediaItems, postType, onNext, onBack, show
           <aside className="w-full flex flex-row items-center justify-start md:justify-center px-6 py-4 gap-4 md:gap-8 overflow-x-auto no-scrollbar">
             <ToolButton icon={<Type size={24} />} label="Text" onClick={() => { closeAllTools(); handleAddText(); }} />
             <ToolButton icon={<Smile size={24} />} label="Stickers" active={isStickerDrawerOpen} onClick={() => { const wasOpen = isStickerDrawerOpen; closeAllTools(); setIsStickerDrawerOpen(!wasOpen); }} />
-            <ToolButton icon={<Pencil size={24} />} label="Draw" active={isDrawing} onClick={() => { const wasDrawing = isDrawing; closeAllTools(); setIsDrawing(!wasDrawing); }} />
             <ToolButton icon={<Sparkles size={24} />} label="Filters" active={isFilterDrawerOpen} onClick={() => { const wasOpen = isFilterDrawerOpen; closeAllTools(); setIsFilterDrawerOpen(!wasOpen); }} />
             <ToolButton icon={<Crop size={24} />} label="Crop" active={isCropping} onClick={() => { closeAllTools(); setIsCropping(true); }} />
             {currentMedia.type === 'video' && (
